@@ -71,13 +71,19 @@ def test_hee_from_hee_xyz():
 
 
 def test_compute_isometry_matrix():
-    lower_left = np.array([0.5, 0.4, 0.1])
-    upper_left = np.array([0.6, 0.3, 0.05])
-    C = tie_pointing.get_distance(lower_left, upper_left)
+    reps = 2
+    lower_left = np.array([[0.5, 0.4, 0.1]] * reps)
+    upper_left = np.array([[0.6, 0.3, 0.05]] * reps)
+    C = np.linalg.norm(upper_left - lower_left, axis=-1)
     third_point = np.array([0, 0, 0.2])
-    plane_normal = tie_pointing.derive_3d_plane_coefficients(lower_left, upper_left, third_point)
-    plane_normal = np.array(plane_normal[:3])
-    output = tie_pointing.compute_isometry_matrix(lower_left, upper_left, plane_normal)
-    hom_upper_left = np.ones(4)
-    hom_upper_left[:3] = upper_left
-    assert np.allclose(output @ hom_upper_left.T, np.array([[0, C, 0, 1]]))
+    plane_normal = tie_pointing.derive_3d_plane_coefficients(lower_left[0], upper_left[0],
+                                                             third_point)
+    plane_normal = np.array([plane_normal[:3]] * reps)
+    output = tie_pointing.compute_isometry_matrices(lower_left, upper_left, plane_normal)
+    hom_upper_left = np.expand_dims(np.ones((reps, 4)), -1)
+    hom_upper_left[:, :3, 0] = upper_left
+    result = (output @ hom_upper_left)[..., 0]
+    expected = np.zeros((reps, 4))
+    expected[:, -1] = 1
+    expected[:, 1] = C
+    assert np.allclose(result, expected)
