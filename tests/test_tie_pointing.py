@@ -1,5 +1,6 @@
 import astropy.coordinates
 import astropy.units as u
+import numpy as np
 import sunpy.data.sample
 import sunpy.map
 from astropy.coordinates import SkyCoord
@@ -7,7 +8,9 @@ from astropy.time import Time
 from astropy.wcs import WCS
 from sunpy.coordinates import HeliocentricEarthEcliptic, HeliographicStonyhurst
 
-from ..tie_pointing import hee_from_hee_xyz, hee_skycoord_from_xyplane, triangulate
+from tie_pointing import tie_pointing
+
+__all__ = ["test_triangulate", "test_hee_from_hee_xyz", "test_compute_isometry_matrix"]
 
 
 def test_triangulate():
@@ -21,9 +24,9 @@ def test_triangulate():
     reference_plane = derive_3d_plane_coefficients(solo_loc.cartesian.xyz.to_value(u.AU),
                                                    earth_loc.cartesian.xyz.to_value(u.AU),
                                                    sun_loc.cartesian.xyz.to_value(u.AU))
-    feature_loc = hee_skycoord_from_xyplane(([1, 1, -1, -1 ]*u.R_sun).to(u.AU),
-                                            ([1, -1, 1, -1]*u.R_sun).to(u.AU),
-                                            *reference_plane, obstime=obstime)
+    feature_loc = tie_pointing.hee_skycoord_from_xyplane(([1, 1, -1, -1 ]*u.R_sun).to(u.AU),
+                                                         ([1, -1, 1, -1]*u.R_sun).to(u.AU),
+                                                         *reference_plane, obstime=obstime)
     # Define sample maps representing view from Earth and SolO
     map_earth = sunpy.map.Map(sunpy.data.sample.AIA_171_IMAGE)
     sample_header = map_earth.wcs.to_header()
@@ -51,16 +54,30 @@ def test_triangulate():
     x_pix_feature_earth, y_pix_feature_earth = wcs_earth.world_to_pixel(feature_loc)
     x_pix_feature_solo, y_pix_feature_solo = wcs_solo.world_to_pixel(feature_loc)
 
-    output = triangulate(earth_loc, solo_loc, sun_loc,
-                         x_pix_feature_earth, y_pix_feature_earth, x_pix_feature_solo, y_pix_feature_solo,
-                         wcs_earth, wcs_solo)
+    output = tie_pointing.triangulate(earth_loc, solo_loc, sun_loc,
+                                      x_pix_feature_earth, y_pix_feature_earth,
+                                      x_pix_feature_solo, y_pix_feature_solo,
+                                      wcs_earth, wcs_solo)
     assert u.allclose(output.cartesian.xyz.squeeze(), feature_loc.cartesian.xyz, rtol=0.005)
 
 
 def test_hee_from_hee_xyz():
     expected_lat, expected_lon, expected_r = [-0.12072942]*u.rad, [-1.69241535]*u.rad, np.array([0.9133455])
     input_x, input_y, input_z = 0.11, 0.9, -0.11
-    output_lat, output_lon, output_r = hee_from_hee_xyz()
+    output_lat, output_lon, output_r = tie_pointing.hee_from_hee_xyz()
     assert output_lat == expected_lat
     assert output_lon == expected_lon
     assert output_r == expected_r
+
+
+def test_compute_isometry_matrix():
+    lower_left = np.array([0.5, 0.4, 0.1])
+    upper_left = np.array([0.6, 0.3, 0.05])
+    C = tie_pointing.get_distance(lower_left, upper_left)
+    third_point = np.array([0, 0, 0.2])
+    plane_normal = tie_pointing.derive_3d_plane_coefficients(lower_left, upper_left, third_point)
+    plane_normal = np.array(plane_normal[:3])
+    output = tie_pointing.compute_isometry_matrix(lower_left, upper_left, plane_normal)
+    hom_upper_left = np.ones(4)
+    hom_upper_left[:3] = upper_left
+    assert np.allclose(output @ hom_upper_left.T, np.array([[0, C, 0, 1]]))

@@ -385,3 +385,158 @@ def hee_from_hee_xyz(x, y, z):
     r = z / np.sin(lat)
     
     return lon * u.rad, lat * u.rad, r
+
+
+def isometerize_vertices(vertices):
+    """
+    Apply an isometry so the lower left is at the origin and upper left is on the y-axis.
+
+    The vertices are given in 3-D space and are assumed to all be in the same plane.
+    Therefore vertices is a 2-D array where the last axis is length 3 and 
+    represent the 3 coordinates. The penultimate axis indexes between vertices where
+    vertices[...,0, :] is the lower left, vertices[...,1, :] is the lower right,
+    vertices[...,2, :] is the upper left, and vertices[...,3, :] is the upper right.
+    All other axes index through different sets of vertices.
+
+    This function converts points to a 2-D planar geometry, with axes, u,v.
+    The origin is the first vertex.
+    The positive direction of the v-axis is the line from the first to the 3rd vertex.
+    The positive direction of the u-axis is the v-axis rotated clockwise by 90 degrees.
+    Project points so they have the following 2-D coords (u, v):
+    vertices[...,0, :]: (0, 0)
+    vertices[...,1, :]: (A, B)
+    vertices[...,2, :]: (0, C)
+    vertices[...,3, :]: (s, t)
+    """
+    if vertices.ndim < 2 or vertices.shape[-2] != 4:
+        raise ValueError(
+            "'vertices' must have >1 dimension and penultimate dimension must have length of 4.")
+        vertices = np.expand_dims(vertices, 0)
+    lower_left, upper_left, right_vertices = \
+        vertices[..., 0:1, :], vertices[..., 2:3, :], vertices[..., 1::2, :]
+    # First find C, i.e. the distance between the 1st and 3rd vertices.
+    C = get_distance(lower_left, upper_left)[0]
+    # Next, project the lower and top right vertices onto the v-axis.
+    v_projections = project_point_onto_line(lower_left, upper_left, right_vertices)
+    # Calculate the v-coordinates of the lower and upper right vertices by getting the
+    # ditance between their v-projections and the origin, and then comparing them
+    # with C to get the sign.
+    v_coords = get_distance(v_projections, lower_left)
+    vc_dist = get_distance(v_projections, upper_left)
+    tol = np.stack((vc_dist, v_coords), axis=-1).min(axis=-1) * 1e-5
+    idx == np.isclose(v_coords + C, rtol=0, atol=tol)
+    v_coords[idx] *= -1
+    B = v_coords[..., 0]
+    t = v_coords[..., 1]
+    # Find the distance from the right vertices to their projections to get their u-coordinates.
+    # By definition the u-coordinates of these vertices are positive.
+    u_coords = get_distance(v_projections, right_vertices)
+    A = u_coords[..., 0]
+    s = c_coords[..., 1]
+    return A, B, C, s, t
+
+def compute_isometry_matrix(lower_left, upper_left, plane_normal):
+    # Calculate the affine transformation matrix that transforms any 3-D point
+    # (x, y, z) by translating it by -lower_left (i.e. the origin is moved to lower_left),
+    # rotates it so the plane on which the point lies is paralle to the z-axis,
+    # and the line from the lower_left to upper_left points is along the y-axis.
+
+    # Start by computing unit vectors, u, v, w, where
+    # the origin is the lower left vertex,
+    # the w-axis is normal to the plane,
+    # the v-axis is along the lower left-upper left line with the positive direction
+    # going from lower left to upper left,
+    # and the u-axis is the cross-product of the w- and v-axes.
+    w = plane_normal / np.expand_dims(get_distance(plane_normal, np.zeros(plane_normal.shape)), -1)
+    c_line_norm = get_distance(lower_left, upper_left)
+    v = (upper_left - lower_left) / np.expand_dims(c_line_norm, -1)
+    u = np.cross(v, w, axis=-1) # j x k = i; k x j = -i
+    # Translation matrix translates so that lower left become the origin.
+    T = np.identity(4)
+    T[:3, 3] = -lower_left
+    # First rotation is to rotate the point so the normal of the plane is parallel to the z-axis.
+    # This is defined by the row vectors of the unit vectors, u, v, w.
+    R1 = np.identity(4)
+    R1[:-1, :-1] = np.stack((u, v, w), axis=-2)
+    # Second rotation is to rotate around the plane normal (now the z-axis) so the 
+    # lower left -> upper left line aligns with the y-axis.
+    # To calculate the angle between this line and the y-axis,
+    # apply the translation and R1 rotation, and then use the tan^-1.
+    # Start by converting the upper left coord to homogenous coords, i.e. an append
+    # a 4th point to final axis whose value is one.
+    hom_shape = np.array(upper_left.shape)
+    hom_shape[..., -1] = 1
+    hom_upper_left = np.concatenate((upper_left, np.ones(hom_shape)), -1)
+    if hom_upper_left.ndim == 1:
+        hom_upper_left = np.expand_dims(hom_upper_left, -1)
+    else:
+        hom_upper_left, np.swapaxes(hom_upper_left, -1, -2)
+    partial_isometry = R1 @ T
+    tmp_upper_left = np.matmul(partial_isometry, hom_upper_left)
+    theta = np.arctan(tmp_upper_left[..., 0, :] / tmp_upper_left[..., 1, :])
+    theta = theta.squeeze()
+    R2 = np.identity(4)
+    R2[:2, :2] = np.array([[np.cos(theta), -np.sin(theta)],
+                           [np.sin(theta), np.cos(theta)]])
+    isometry = R2 @ partial_isometry
+    return isometry
+
+
+def deisometerize(points, origin, v_axis_coeffs, plane_coeffs):
+    pass    
+
+
+def fit_ellipse_within_quadrilateral(A, B, C, s, t):
+    # Fix ellipse center, (h, k), by setting h as somewhere along the
+    # open line segment connecting the midpoints of the diagonals of
+    # the quadrilateral. Determine k from the equation of a line.
+    h = 0.5 * (s/2 + A/2)
+    k = (h - s/2) * ((t - B - C) / (s - A)) + t/2
+    # To solve for the ellipse tangent to the four sides of the quadrilateral,
+    # we can solve for the ellipse tangent to the three sides of a triangle
+    # the vertices of which are the complex points:
+    # z1 = 0; z2 = A + Bi; z3 = - ((At - Bs) / (s - A))i
+    # and the two ellipse foci are then the zeroes of the equation:
+    # ph(z) = (s - A)z^2 - 2(a-A)(h - ik)z - (B - iA)(s - 2h)C
+    # the discriminant of which can be denoted by
+    # r(h) = r1(h) + ir2(h) where:
+    s_A = s - A
+    h_A_2 = (h - A) / 2
+    r1 = (
+            4 * (s_A**2 - (t - B - C)**2) * h_A_2**2
+            + 4 * s_A * (A*s_A + B*(B - t) + C*(C - t)) * h_A_2
+            + s_A**2 * (A**2 - (C - B)**2)
+            )
+    r2 = (
+            8 * (t - B - C) * s_A * h_A_2**2
+            + 4 * s_A * (A*t + C*s + B*s - 2*A*B) * h_A_2
+            + 2 * A * s_A**2 * (B - C)
+            )
+    # Thus, we need to determine the quartic polynomial u(h) - |r(h)|^2 = r1^2 + r2^2
+    # and we can then solve for the ellipse semimajor axis a and semiminor axis b
+    # from the equations:
+    R = np.sqrt((r1**2 + r2**2) / (16 * s_A**4))
+    W = 0.25 * (C / s_A**2) * (2 * (B*t - A*(t - c))*h - A*C*s) * (2*h - A) * (2*h - s)
+    a = np.sqrt(0.5 * (np.sqrt(R**2 + 4*W) + R))
+    b = np.sqrt(0.5 * (np.sqrt(R**2 + 4*W) - R))
+    # Knowing the axes, we can generate the ellipse and float its tilt angle d until it
+    # sits tangent to each side of the quadrilateral, using the inclined ellipse equation:
+    
+
+def project_point_onto_line(a, b, p):
+    """
+    Project point, p, onto line defined by points, a, b.
+
+    Works in any number of dimensions.
+    Input arrays can have any number of dimensions. But is is assumed that
+    the final dimension represents the axes defining the points while other axes
+    represent different points.
+    """
+    ap = p-a
+    ab = b-a
+    dot_ratio = dot_product_single_axis(ap, ab) / dot_product_single_axis(ab, ab)
+    return a + np.expand_dims(dot_ratio, -1) * ab
+
+
+def dot_product_single_axis(a, b, axis=-1):
+    return (a * b).sum(axis=axis)
