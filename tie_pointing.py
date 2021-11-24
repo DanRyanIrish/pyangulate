@@ -388,55 +388,6 @@ def hee_from_hee_xyz(x, y, z):
     return lon * u.rad, lat * u.rad, r
 
 
-def isometerize_vertices(vertices):
-    """
-    Apply an isometry so the lower left is at the origin and upper left is on the y-axis.
-
-    The vertices are given in 3-D space and are assumed to all be in the same plane.
-    Therefore vertices is a 2-D array where the last axis is length 3 and 
-    represent the 3 coordinates. The penultimate axis indexes between vertices where
-    vertices[...,0, :] is the lower left, vertices[...,1, :] is the lower right,
-    vertices[...,2, :] is the upper left, and vertices[...,3, :] is the upper right.
-    All other axes index through different sets of vertices.
-
-    This function converts points to a 2-D planar geometry, with axes, u,v.
-    The origin is the first vertex.
-    The positive direction of the v-axis is the line from the first to the 3rd vertex.
-    The positive direction of the u-axis is the v-axis rotated clockwise by 90 degrees.
-    Project points so they have the following 2-D coords (u, v):
-    vertices[...,0, :]: (0, 0)
-    vertices[...,1, :]: (A, B)
-    vertices[...,2, :]: (0, C)
-    vertices[...,3, :]: (s, t)
-    """
-    if vertices.ndim < 2 or vertices.shape[-2] != 4:
-        raise ValueError(
-            "'vertices' must have >1 dimension and penultimate dimension must have length of 4.")
-        vertices = np.expand_dims(vertices, 0)
-    lower_left, upper_left, right_vertices = \
-        vertices[..., 0:1, :], vertices[..., 2:3, :], vertices[..., 1::2, :]
-    # First find C, i.e. the distance between the 1st and 3rd vertices.
-    C = get_distance(lower_left, upper_left)[0]
-    # Next, project the lower and top right vertices onto the v-axis.
-    v_projections = project_point_onto_line(lower_left, upper_left, right_vertices)
-    # Calculate the v-coordinates of the lower and upper right vertices by getting the
-    # ditance between their v-projections and the origin, and then comparing them
-    # with C to get the sign.
-    v_coords = get_distance(v_projections, lower_left)
-    vc_dist = get_distance(v_projections, upper_left)
-    tol = np.stack((vc_dist, v_coords), axis=-1).min(axis=-1) * 1e-5
-    idx == np.isclose(v_coords + C, rtol=0, atol=tol)
-    v_coords[idx] *= -1
-    B = v_coords[..., 0]
-    t = v_coords[..., 1]
-    # Find the distance from the right vertices to their projections to get their u-coordinates.
-    # By definition the u-coordinates of these vertices are positive.
-    u_coords = get_distance(v_projections, right_vertices)
-    A = u_coords[..., 0]
-    s = c_coords[..., 1]
-    return A, B, C, s, t
-
-
 def compute_isometry_matrices(new_origin, new_y, plane_normal):
     """
     Calculate the affine transformation matrix that does the following:
@@ -444,6 +395,8 @@ def compute_isometry_matrices(new_origin, new_y, plane_normal):
     2. rotates such that the plane on which the point lies becomes parallel to the z-axis;
     3. rotates the line from the new_origin to new_y around the new z-axis so
     to is aligned with the y-axis.
+
+    Also calculate the inverse affine transform.
 
     Parameters
     ----------
@@ -469,6 +422,10 @@ def compute_isometry_matrices(new_origin, new_y, plane_normal):
         in the inputs.
         The final two dimensions will represent 4x4 matrices, i.e. affine transformations.
         See Notes for more.
+
+    inverse_isometry: `numpy.ndarray`
+        The inverse affine transformation.
+        Same shape and interpretation of dimensions as the forward transform.
 
     Notes
     -----
@@ -515,7 +472,7 @@ def compute_isometry_matrices(new_origin, new_y, plane_normal):
     # Create a 4x4 matrix as required for 3-D affine transformation matrices and broadcast
     # to the other dimensions of the input.
     matrix_shape = list(input_shape[:-1]) + [4, 4]
-    tiled_affine_identity_matrix = np.broadcast_to(np.identity(4), tuple(matrix_shape))
+    tiled_affine_identity_matrix = np.broadcast_to(np.identity(4), matrix_shape)
     T = copy.deepcopy(tiled_affine_identity_matrix)
     # Set translation (4th) column to subtract new origin, leaving 4th element as 1.
     T[...,:3, 3] = -new_origin
@@ -554,17 +511,35 @@ def compute_isometry_matrices(new_origin, new_y, plane_normal):
     rot[..., 1, 1] = np.cos(theta)
     R2 = copy.deepcopy(tiled_affine_identity_matrix)
     R2[..., :2, :2] = rot
+
     # Final isometery is given by the matrix product, R2.R1.T
     isometry = R2 @ partial_isometry
-    return isometry
 
+    # Also compute inverse isometry.
+    # R2^-1 is simply a rotation around the z-axis by -theta.
+    rot_inv = np.zeros(tuple(rot_shape))
+    rot_inv[..., 0, 0] = np.cos(-theta)
+    rot_inv[..., 0, 1] = -np.sin(-theta)
+    rot_inv[..., 1, 0] = np.sin(-theta)
+    rot_inv[..., 1, 1] = np.cos(-theta)
+    R2_inv = copy.deepcopy(tiled_affine_identity_matrix)
+    R2_inv[..., :2, :2] = rot_inv
 
-def _compute_inverse_isometry_matrix(new_origin, u, v, w, theta):
-    # Apply the inverse transformation in reverse order.
-    # The first transformation is therefore R2^-1.
-    # This is simply a rotation around the z-axis by -theta.
-    R2_inv = 0
-    
+    # Whereas R1 was given by the row vectors of the u, v, w unit vectors.
+    # inverse of R1 is given by the column vectors of u, v, w.
+    R1_inv = copy.deepcopy(tiled_affine_identity_matrix)
+    R1_inv[..., :-1, :-1] = np.stack((u, v, w), axis=-1)
+
+    # The inverse translation is simply a positive translation by new_origin
+    # rather that a negative translation.
+    T_inv = copy.deepcopy(tiled_affine_identity_matrix)
+    T_inv[...,:3, 3] = new_origin
+
+    # Final inverse isometry in the matrix produc of the components in reverse
+    # order to the forward transformation: T^-1 . R1^-1 . R2^-1
+    inverse_isometry = T_inv @ R1_inv @ R2_inv
+
+    return isometry, inverse_isometry
 
 
 def fit_ellipse_within_quadrilateral(A, B, C, s, t):

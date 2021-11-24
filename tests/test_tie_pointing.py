@@ -71,6 +71,7 @@ def test_hee_from_hee_xyz():
 
 
 def test_compute_isometry_matrix():
+    # Define inputs.
     reps = 2
     lower_left = np.array([[0.5, 0.4, 0.1]] * reps)
     upper_left = np.array([[0.6, 0.3, 0.05]] * reps)
@@ -79,11 +80,24 @@ def test_compute_isometry_matrix():
     plane_normal = tie_pointing.derive_3d_plane_coefficients(lower_left[0], upper_left[0],
                                                              third_point)
     plane_normal = np.array([plane_normal[:3]] * reps)
-    output = tie_pointing.compute_isometry_matrices(lower_left, upper_left, plane_normal)
+    # Execute test.
+    # Calculate isometry and inverse isometry.
+    isometry, inverse_isometry = tie_pointing.compute_isometry_matrices(lower_left, upper_left,
+                                                                        plane_normal)
+    # Apply isometry to upper_left point.
     hom_upper_left = np.expand_dims(np.ones((reps, 4)), -1)
     hom_upper_left[:, :3, 0] = upper_left
-    result = (output @ hom_upper_left)[..., 0]
+    result = isometry @ hom_upper_left
+    # Define expected result of transformation of upper_left point.
     expected = np.zeros((reps, 4))
     expected[:, -1] = 1
     expected[:, 1] = C
+    expected = np.expand_dims(expected, -1)
+
+    # Apply inverse transformation to result of forward transformation.
+    # It should reproduce the input to the forward transform.
+    inverse_result = inverse_isometry @ result
+
+    # Assert results are as expected.
     assert np.allclose(result, expected)
+    assert np.allclose(inverse_result, hom_upper_left)
