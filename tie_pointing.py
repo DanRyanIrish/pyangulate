@@ -492,9 +492,7 @@ def compute_isometry_matrices(new_origin, new_y, plane_normal):
     # intermediate (x,y)/(u,v) coordinates.
     # Start by converting the new_y coord to homogenous coords, i.e. an append
     # a 4th point to final axis whose value is 1.  See Notes in docstring.
-    hom_shape = np.array(new_y.shape)
-    hom_shape[..., -1] = 1
-    hom_new_y = np.concatenate((new_y, np.ones(hom_shape)), -1)
+    hom_new_y = convert_to_homogenous_coords(new_y)
     # Re-represent last axis as a 4x1 matrix rather than a length-4 homogeneous location coord.
     hom_new_y = np.expand_dims(hom_new_y, -1)
     partial_isometry = R1 @ T
@@ -542,14 +540,58 @@ def compute_isometry_matrices(new_origin, new_y, plane_normal):
     return isometry, inverse_isometry
 
 
-def fit_ellipse_within_quadrilateral(A, B, C, s, t):
+def convert_to_homogenous_coords(coords, vector=False, axis=-1):
+    hom_shape = np.array(coords.shape)
+    hom_shape[..., -1] = 1
+    if vector:
+        hom_column = np.zeroes(hom_shape)
+    else:
+        hom_column = np.ones(hom_shape)
+    return np.concatenate((coords, hom_column), axis=axis)
+
+
+def inscribe_ellipse_in_quadrilateral(vertices):
+    # Apply isometry to vertices, converting them to a 2-D coordinate system whereby:
+    # lower left: (0, 0)
+    # lower right: (A, B)
+    # upper left: (0, C)
+    # upper right: (s,t)
+    # Start by calculating the affine transformation (and its inverse) that represent
+    # the isometry.
+    # To do this we need a vector normal to the plane in which the vertices lie.
+    # This can be found be taking the cross product of two vectors in the plane.
+    # Do not use the origin for this calculation.
+    i = 0
+    cross_vertices = []
+    while i < vertices.shape[-2] and len(cross_vertices) < 2:
+        vertex = vertices[..., i, :]
+        if not np.any(np.all(vertex == 0, axis=-1)):
+            cross_vertices.append(vertex)
+        i += 1
+    if len(cross_vertices) < 2:
+        raise ValueError("Could not find 2 sets of vertices not including the origin.")
+    plane_normal = np.cross(*cross_vertices)
+    isometry, inverse_isometry = compute_isometry_matrices(vertices[..., 0, :],
+                                                           vertices[..., 2, :], plane_normal)
+    # Convert vertices to homogenous coords, (i.e. add a 4th coord equalling 1)
+    # as required for affine transformations, and represent last axis as a 4x1 matrix
+    # for purposes of matrix multiplication rather than a length-4 row vector.
+    hom_vertices = np.expand_dims(convert_to_homogenous_coords(vertices, axis=-1), -1)
+    # Apply isometry and extract A, B, C, s, t.
+    iso_vertices = (isometry @ hom_vertices)[..., 0]  # Remove dummy axis retained by mat. mul.
+    A = iso_vertices[..., 1, 0]
+    B = iso_vertices[..., 1, 1]
+    C = iso_vertices[..., 2, 1]
+    s = iso_vertices[..., 3, 0]
+    t = iso_vertices[..., 3, 1]
+
     # Fix ellipse center, (h, k), by setting h as somewhere along the
     # open line segment connecting the midpoints of the diagonals of
     # the quadrilateral. Determine k from the equation of a line.
     h = 0.5 * (s/2 + A/2)
     k = (h - s/2) * ((t - B - C) / (s - A)) + t/2
     # To solve for the ellipse tangent to the four sides of the quadrilateral,
-    # we can solve for the ellipse tangent to the three sides of a triangle
+    # we can solve for the ellipse tangent to the three sides of a triangle,
     # the vertices of which are the complex points:
     # z1 = 0; z2 = A + Bi; z3 = - ((At - Bs) / (s - A))i
     # and the two ellipse foci are then the zeroes of the equation:
@@ -569,14 +611,16 @@ def fit_ellipse_within_quadrilateral(A, B, C, s, t):
             + 2 * A * s_A**2 * (B - C)
             )
     # Thus, we need to determine the quartic polynomial u(h) - |r(h)|^2 = r1^2 + r2^2
-    # and we can then solve for the ellipse semimajor axis a and semiminor axis b
+    # and we can then solve for the ellipse semi-major axis, a, and semi-minor axis, b,
     # from the equations:
     R = np.sqrt((r1**2 + r2**2) / (16 * s_A**4))
-    W = 0.25 * (C / s_A**2) * (2 * (B*t - A*(t - c))*h - A*C*s) * (2*h - A) * (2*h - s)
+    W = 0.25 * (C / s_A**2) * (2 * (B*s - A*(t - C))*h - A*C*s) * (2*h - A) * (2*h - s)
     a = np.sqrt(0.5 * (np.sqrt(R**2 + 4*W) + R))
     b = np.sqrt(0.5 * (np.sqrt(R**2 + 4*W) - R))
     # Knowing the axes, we can generate the ellipse and float its tilt angle d until it
-    # sits tangent to each side of the quadrilateral, using the inclined ellipse equation:
+    # sits tangent to each side of the quadrilateral, using the inclined ellipse equation
+    # and and the equation of the tangent line.
+    return h, k, a, b, iso_vertices, A, B, C, s, t, r1, r2, R, W
     
 
 def project_point_onto_line(a, b, p):
