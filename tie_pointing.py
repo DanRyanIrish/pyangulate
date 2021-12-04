@@ -1,5 +1,6 @@
 import copy
 import numbers
+from functools import partial
 
 import astropy.coordinates
 import astropy.units as u
@@ -640,3 +641,207 @@ def project_point_onto_line(a, b, p):
 
 def dot_product_single_axis(a, b, axis=-1):
     return (a * b).sum(axis=axis)
+
+
+def max_area_ellipse_in_parallelogram(vertices, homogenous_axis=-1):
+    """Derive parametic equation of the maximum-area ellipse within a parallelogram.
+
+    Parameters
+    ----------
+    vertices: `numpy.ndarray`
+        3x4 array giving the 2-D homogenous coordinates of the 4 vertices
+        of the parallelogram. The 1st axis gives the coordinates of a single vertex
+        while the 2nd axis iterates from vertex to vertex.
+        The vertices must be in the following order:
+        lower left, lower right, upper left, upper right.
+    theta:
+        The angle of the point on the ellipse for which the coords are desired.
+    homogenous_axis: `int`
+        The position of the homogenous axis. Must be 0 or -1.
+        If 0, the first element of each coordinate is the homogenous element.
+        If -1, the last element of each coordinate is the homogenous element.
+
+    Returns
+    -------
+    parametric_ellipse: function
+        A function taking the angle within the ellipse, theta, and returning the
+        x-y coordinate on the ellipse at that angle.
+
+    Notes
+    -----
+    Outline
+    To derive the equation of the maximum-area ellipse inside a parallelogram,
+    we use the affine transformation (projective collineation) that transforms the
+    parallelogram to the 2-unit square (sides of length 2 units).
+    Because the maximum-area ellipse inscribed in the 2-unit square is the unit circle,
+    the inverse of the above transform transformis the parametric equation of the
+    unit circle to that of the maximum-area ellipse in the original parallelogram.
+
+    5th point
+    An ellipse can only be uniquely defined from 5 points. While the vertices of
+    a quadrilateral only give us 4, we can use the fact that the center of an
+    ellipse inscribed in a parallelgram must be the intersection of the parallelograms
+    diagonals. This is a special case of the more general case of inscribing an ellipse
+    in a quadrilateral. In the general case, the center must lie on the line segment
+    between the midpoints of the diagonals. However, since for a parallelogram, the midpoints
+    for the diagonals are equal, we have a unique solution. This means that the method used
+    here is specific to the parallogram case. Although the center point is not on the ellipse,
+    it can still be used to uniquely define the transformation from the parallelogram to the
+    2-unit square.
+
+    Projective Collineation
+    The projective collineations is an affine transformation that converts the
+    parallelogram vertices to those of the 2-unit swaure. See the docstring of
+    the function used to calculate the projective collineation for more info.
+
+    Parametric Equation of the Ellipse
+    Once the transformation, T, from the parallelogram to the 2-unit square is found,
+    the parametic equation of the inscribed ellipse, e, is found by transforming the
+    parametric equation of the unit circle, c,  via the inverse of T. i.e.
+    e = T^-1 c
+    where c = [1 cos(theta) sin(theta)].
+    Substituting theta into into e will give the x-y coordinate on the ellipse that
+    correspond to the point on the unit circle at the angle theta.
+
+    Homogenous Coordinates Convention
+    Above we have used the convention of placing the homogenous coordinate at the
+    front of the point vectors. However, the above workflow works equally well if the
+    homogenous coordinates are placed at the end of the vectors. The only result is that
+    the x-y values in the parametric ellipse equation will correspond to the 1st and 2nd
+    entries instead of the 2nd and 3rd entries.  (Or if the points are 3-D, the x, y, z
+    values will correspond to the 1st, 2nd and 3rd entries rather than the 2nd, 3rd, and
+    4th entries.
+
+    References
+    ----------
+    [1] Hayes 2016, MAXIMUM AREA ELLIPSES INSCRIBING SPECIFIC QUADRILATERALS,
+        Proceedings of The Canadian Society for Mechanical Engineering International Congress 2016
+        http://faculty.mae.carleton.ca/John_Hayes/Papers/CCToMM_MJDH_MaxEllipse_RevF.pdf
+    [2] Zhang 1993, Estimating Projective Transformation Matrix (Collineation, Homography),
+        Microsoft Research Techical Report MSR-TR-2010-63,
+        https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/MSR-TR-2010-63.pdf
+    """
+    # Sanitize inputs
+    homogenous_is_last = True
+    if np.isclose(homogenous_axis, 0):
+        homogenous_is_last = False
+    elif not np.isclose(homogenous_axis, -1):
+        raise ValueError(f"homogenous_axis must be 0 or -1. Given value: {homogenous_axis}")
+    # Calculate center of parallelogram, given by the midpoint of the diagonals.
+    # Since the midpoints of both diagonals are equal by definition,
+    # we only need to use 1 diagonal.
+    center = (vertices[:, 0] + vertices[:, 3]) / 2
+
+    # Define coordinates of the 2-unit square. Include center for convenience now and
+    # extract later.
+    square_vertices = np.array([[-1, -1], [1, -1], [-1, 1], [1, 1], [0, 0]]).T
+    # Convert to homogenous coords
+    hom_values = (np.ones((1, 5)), square_vertices)
+    if homogenous_is_last:
+        hom_values = hom_values[::-1]
+    square_vertices = np.concatenate(hom_values, axis=0)
+    # Extract center from vertices array.
+    square_center = square_vertices[:, -1:]
+    square_vertices = square_vertices[:, :-1]
+
+    # Calculate projective collineation
+    T = derive_projective_collineation_from_five_points(vertices, square_vertices,
+                                                        center, square_center,
+                                                        homogenous_axis=homogenous_axis)
+    T_inv = np.linalg.inv(T)
+
+    # Calculate parametric equation of the ellipse, e.
+    def ellipse(T, homogenous_is_last, theta):
+        if homogenous_is_last:
+            circle = np.array([np.cos(theta), np.sin(theta), 1])
+            item = slice(None, 2)
+        else:
+            circle = np.array([1, np.cos(theta), np.sin(theta)])
+            item = slice(1, None)
+        ellipse_xy = T_inv @ circle
+        return ellipse_xy[item]
+
+    return partial(ellipse, T, homogenous_is_last)
+
+
+def derive_projective_collineation_from_five_points(points, images, point5, image5,
+                                                    homogenous_axis=-1):
+    """Derive projection collineation mapping points to their images.
+
+    Requires 5 points and their images.
+
+    Parameters
+    ----------
+    points: `numpy.ndarray`
+        n+1 x 4 array of 4 points in homogenous coordinates
+        where n is the number of physical dimensions.
+    images: `numpy.ndarray`
+        n+1 x 4 array of 4 images of the above points after the transformation.
+    point5: `numpy.ndarray`
+        n+1 x 1 array of a 5th point used in the calculation
+    image5: `numpy.ndarray`
+        n+1 x 1 array giving the image of the 5th point after transformation.
+    homogenous_axis: `int`
+        Indicates whether the first of last row of the above coordinates holds
+        the homogenous element.  Can take values of 0 or -1.
+
+    Returns
+    -------
+    T: `numpy.ndarray`
+        n+1 x n+1 matrix defining the transformation from the points to their images.
+
+    Notes
+    -----
+    Given 5 points and their images after transformation, we can define a projective
+    collineation (affine transformation) that maps the 5 points to their images.
+    Let the homogenous coordinates of the 5 points be:
+    m1 = [1 ]  m2 = [1 ]  m3 = [1 ]  m4 = [1 ]  m5 = [1 ]
+         [w1]       [x1]       [y1]       [z1]       [v1]
+         [w2]       [x2]       [y2]       [z2]       [v2]
+    and their images after transformation be:
+    M1 = [1 ]  M2 = [1 ]  M3 = [1 ]  M4 = [1 ]  M5 = [1 ]
+         [W1]       [X1]       [Y1]       [Z1]       [V1]
+         [W2]       [X2]       [Y2]       [Z2]       [V2]
+    In our algorithm, let m1,...,m4 be the vertices of the parallelogram and m5 its center.
+    M1,...,M4 are then the vertices of the 2-unit square and M5 is the origin.
+    The projective collineation (affine transform), T, transforming the points to their
+    images (parallelogram to 2-unit square), is given by
+        T = A_2 A_1^-1
+    where A_1^-1 is the inverse of A_1, the matrix that transforms a set of standard
+    reference points to the original points.
+    Similarly, A_2 is the matrix that transforms the same set of standard reference
+    points to the image points. Hence it follows that T will transform the original
+    points to the image points.
+    A_1 is given by:
+    A_1 = [c1*m1 c2*m2 c3*m3 c4*m4]
+    where c1,...,c4 are given by the matrix product
+    c = m^-1 m5
+    where m^-1 is the inverse of the matrix m = [m1 m2 m3 m4].
+    A_2 is found is exactly the same way using the matrix M = [M1 M2 M3 M4] and M5.
+
+    In the above description we have assumed that the points given are 2-D and that the
+    homogenous element is given in the first rown. However, the same workflow works
+    equally well in 3-D by simply adding a 3rd dimension to the vectors describing the
+    original and image points.  It also works if the homogenous element is in the last row.
+    The resulting matrix will differ in that it will be suited to transformations
+    where the homogenous element of the locations are in the last row, but should give
+    the same transformations.
+
+    References
+    ----------
+    [1] Zhang 1993, Estimating Projective Transformation Matrix (Collineation, Homography),
+        Microsoft Research Techical Report MSR-TR-2010-63,
+        https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/MSR-TR-2010-63.pdf
+    """
+    # Calculate matrix A1. See Notes in docstring.
+    points_inv = np.linalg.pinv(points)  # inverse matrix of vertices.
+    lam = points_inv @ point5
+    A1 = points * lam.T
+    A1_inv = np.linalg.pinv(A1)
+    # Repeat for calculation of matrix A2.  See Notes in docstring.
+    images_inv = np.linalg.pinv(images)
+    lam_prime = images_inv @ image5
+    A2 = images * lam_prime.T
+    # Calculate the projective collineation (affine transformation) from
+    # parallelogram vertices to 2-unit square vertices.  See Notes in docstring.
+    return A2 @ A1_inv
