@@ -8,9 +8,8 @@ from astropy.time import Time
 from astropy.wcs import WCS
 from sunpy.coordinates import HeliocentricEarthEcliptic, HeliographicStonyhurst
 
-from tie_pointing import tie_pointing
-
-__all__ = ["test_triangulate", "test_hee_from_hee_xyz", "test_compute_isometry_matrix"]
+from tie_pointing import utils
+from tie_pointing import triangulate
 
 
 def test_triangulate():
@@ -21,13 +20,13 @@ def test_triangulate():
     earth_loc = astropy.coordinates.get_body("Earth", obstime).transform_to(HeliocentricEarthEcliptic)
     sun_loc = SkyCoord(lon=0*u.deg, lat=0*u.deg, distance=0*u.AU,
                        frame=HeliocentricEarthEcliptic(obstime=obstime))
-    reference_plane = tie_pointing.derive_3d_plane_coefficients(
+    reference_plane = utils.derive_3d_plane_coefficients(
         solo_loc.cartesian.xyz.to_value(u.AU),
         earth_loc.cartesian.xyz.to_value(u.AU),
         sun_loc.cartesian.xyz.to_value(u.AU))
-    feature_loc = tie_pointing.hee_skycoord_from_xyplane(([1, 1, -1, -1 ]*u.R_sun).to(u.AU),
-                                                         ([1, -1, 1, -1]*u.R_sun).to(u.AU),
-                                                         *reference_plane, obstime=obstime)
+    feature_loc = utils.hee_skycoord_from_xyplane(([1, 1, -1, -1 ]*u.R_sun).to(u.AU),
+                                                  ([1, -1, 1, -1]*u.R_sun).to(u.AU),
+                                                  *reference_plane, obstime=obstime)
     # Define sample maps representing view from Earth and SolO
     map_earth = sunpy.map.Map(sunpy.data.sample.AIA_171_IMAGE)
     sample_header = map_earth.wcs.to_header()
@@ -55,8 +54,8 @@ def test_triangulate():
     x_pix_feature_earth, y_pix_feature_earth = wcs_earth.world_to_pixel(feature_loc)
     x_pix_feature_solo, y_pix_feature_solo = wcs_solo.world_to_pixel(feature_loc)
 
-    output = tie_pointing.triangulate(earth_loc, solo_loc, sun_loc,
-                                      x_pix_feature_earth, y_pix_feature_earth,
-                                      x_pix_feature_solo, y_pix_feature_solo,
-                                      wcs_earth, wcs_solo)
+    output = triangulate.triangulate(earth_loc, solo_loc, sun_loc,
+                                     x_pix_feature_earth, y_pix_feature_earth,
+                                     x_pix_feature_solo, y_pix_feature_solo,
+                                     wcs_earth, wcs_solo)
     assert u.allclose(output.cartesian.xyz.squeeze(), feature_loc.cartesian.xyz, rtol=0.005)

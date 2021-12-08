@@ -1,3 +1,5 @@
+import numbers
+
 import astropy.units as u
 import numpy as np
 from astropy.coordinates import SkyCoord
@@ -44,8 +46,11 @@ def convert_to_homogeneous_coords(coords, component_axis=-1,
     return np.concatenate(c, axis=component_axis)
 
 
-def dot_product_single_axis(a, b, axis=-1):
-    return (a * b).sum(axis=axis)
+def dot_product_single_axis(a, b, axis=-1, keepdims=False):
+    prod = (a * b).sum(axis=axis)
+    if keepdims:
+        prod = np.expand_dims(prod, axis)
+    return prod
 
 
 def calculate_3d_line_direction_vector(p, q):

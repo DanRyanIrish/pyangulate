@@ -1,3 +1,11 @@
+import numbers
+
+import astropy.units as u
+import numpy as np
+from astropy.coordinates import SkyCoord
+from sunpy.coordinates import HeliocentricEarthEcliptic
+
+from tie_pointing import utils
 
 
 def triangulate(observer1, observer2, epipolar_origin,
@@ -164,12 +172,12 @@ def triangulate(observer1, observer2, epipolar_origin,
     t = ((epipolar_origin_xyz - observer1_xyz) * d).sum(axis=-1) # dot product of last axis of both vectors.
     p = observer1_xyz + np.expand_dims(t, -1) * d
     # The direction vector of the 3-D line definining the a-axis this therefore:
-    dv_a = calculate_3d_line_direction_vector(epipolar_origin_xyz, p)
+    dv_a = utils.calculate_3d_line_direction_vector(epipolar_origin_xyz, p)
     # The direction vector of the b-axis is:
     if observer2.lon < 0 * u.deg:
-        dv_b = calculate_3d_line_direction_vector(observer2_xyz, observer1_xyz)
+        dv_b = utils.calculate_3d_line_direction_vector(observer2_xyz, observer1_xyz)
     else:
-        dv_b = calculate_3d_line_direction_vector(observer1_xyz, observer2_xyz)
+        dv_b = utils.calculate_3d_line_direction_vector(observer1_xyz, observer2_xyz)
     # Thus observers (a, b) coordinates are (|origin p|, |p Observer|)
     # The sign needs to be worked out depending on the positions of the spacecraft.
     a = np.linalg.norm(p - epipolar_origin_xyz, axis=-1)
@@ -189,12 +197,12 @@ def triangulate(observer1, observer2, epipolar_origin,
     # Derive the a-b coordinates of intersection of the lines of view.
     dr_a, dr_b = derive_epipolar_coords_of_a_point(d_2, v_2, s_2, d_1, v_1, s_1)
     # Convert feature's a-b coords to xyz coords
-    feature_xyz = (calculate_point_along_3d_line(dv_a,
-                                                 epipolar_origin_xyz,
-                                                 np.expand_dims(dr_a.value, -1)) +
-                   calculate_point_along_3d_line(dv_b,
-                                                 epipolar_origin_xyz,
-                                                 np.expand_dims(dr_b.value, -1)))
+    feature_xyz = (utils.calculate_point_along_3d_line(dv_a,
+                                                       epipolar_origin_xyz,
+                                                       np.expand_dims(dr_a.value, -1))
+                   + utils.calculate_point_along_3d_line(dv_b,
+                                                         epipolar_origin_xyz,
+                                                         np.expand_dims(dr_b.value, -1)))
 
     feature = SkyCoord(feature_xyz[...,0], feature_xyz[...,1], feature_xyz[...,2],
                        unit=[dist_unit] * 3,
@@ -215,8 +223,7 @@ def _get_lon_from_xy(x, y):
     return lon * u.rad
 
 
-def derive_epipolar_coords_of_a_point(d_1, v_1, s_1,
-                                      d_2, v_2, s_2):
+def derive_epipolar_coords_of_a_point(d_1, v_1, s_1, d_2, v_2, s_2):
     """
     Derive the intersection of lines of view of a feature from two observers.
 
