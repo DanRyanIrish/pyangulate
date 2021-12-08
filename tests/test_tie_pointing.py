@@ -21,9 +21,10 @@ def test_triangulate():
     earth_loc = astropy.coordinates.get_body("Earth", obstime).transform_to(HeliocentricEarthEcliptic)
     sun_loc = SkyCoord(lon=0*u.deg, lat=0*u.deg, distance=0*u.AU,
                        frame=HeliocentricEarthEcliptic(obstime=obstime))
-    reference_plane = derive_3d_plane_coefficients(solo_loc.cartesian.xyz.to_value(u.AU),
-                                                   earth_loc.cartesian.xyz.to_value(u.AU),
-                                                   sun_loc.cartesian.xyz.to_value(u.AU))
+    reference_plane = tie_pointing.derive_3d_plane_coefficients(
+        solo_loc.cartesian.xyz.to_value(u.AU),
+        earth_loc.cartesian.xyz.to_value(u.AU),
+        sun_loc.cartesian.xyz.to_value(u.AU))
     feature_loc = tie_pointing.hee_skycoord_from_xyplane(([1, 1, -1, -1 ]*u.R_sun).to(u.AU),
                                                          ([1, -1, 1, -1]*u.R_sun).to(u.AU),
                                                          *reference_plane, obstime=obstime)

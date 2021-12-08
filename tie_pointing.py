@@ -128,19 +128,21 @@ def triangulate(observer1, observer2, epipolar_origin,
     observer2_xyz = np.moveaxis(observer2_xyz, 0, -1)
     epipolar_origin_xyz = np.moveaxis(epipolar_origin_xyz, 0, -1)
     # Calculate distance between observers and epipolar origin.
-    d_1 = get_distance(observer1_xyz, epipolar_origin_xyz)
-    d_2 = get_distance(observer2_xyz, epipolar_origin_xyz)
-    d_12 = get_distance(observer2_xyz, observer1_xyz)
+    d_1 = np.linalg.norm(observer1_xyz - epipolar_origin_xyz, axis=-1)
+    d_2 = np.linalg.norm(observer2_xyz - epipolar_origin_xyz, axis=-1)
+    d_12 = np.linalg.norm(observer2_xyz - observer1_xyz, axis=-1)
 
     # Calculate the angles from the origin to the feature in the image plane of the two observers.
     x_origin_obs1, y_origin_obs1 = wcs_obs1.world_to_pixel(epipolar_origin)
     origin_pix_obs1 = np.stack((x_origin_obs1, y_origin_obs1), axis=-1)
-    s_1 = u.Quantity(get_distance(feature_pix_obs1, origin_pix_obs1) * wcs_obs1.wcs.cdelt[0],
-                     unit=wcs_obs1.wcs.cunit[0])
+    s_1 = u.Quantity(
+        np.linalg.norm(feature_pix_obs1 - origin_pix_obs1, axis=-1) * wcs_obs1.wcs.cdelt[0],
+        unit=wcs_obs1.wcs.cunit[0])
     x_origin_obs2, y_origin_obs2 = wcs_obs2.world_to_pixel(epipolar_origin)
     origin_pix_obs2 = np.stack((x_origin_obs2, y_origin_obs2), axis=-1)
-    s_2 = u.Quantity(get_distance(feature_pix_obs2, origin_pix_obs2)  * wcs_obs2.wcs.cdelt[0],
-                     unit=wcs_obs2.wcs.cunit[0])
+    s_2 = u.Quantity(
+        np.linalg.norm(feature_pix_obs2 - origin_pix_obs2, axis=-1)  * wcs_obs2.wcs.cdelt[0],
+        unit=wcs_obs2.wcs.cunit[0])
     # Determine sign of s_1 and s_2. This depends on whether they to
     # the right (+) of left (-) the line from the image centre to the projection
     # of the epipolar origin.
@@ -183,11 +185,11 @@ def triangulate(observer1, observer2, epipolar_origin,
         dv_b = calculate_3d_line_direction_vector(observer1_xyz, observer2_xyz)
     # Thus observers (a, b) coordinates are (|origin p|, |p Observer|)
     # The sign needs to be worked out depending on the positions of the spacecraft.
-    a = get_distance(epipolar_origin_xyz, p)
+    a = np.linalg.norm(p - epipolar_origin_xyz, axis=-1)
     p_lon = get_lon_from_xy(p[...,0], p[...,1])
-    b_1 = get_distance(observer1_xyz, p)
+    b_1 = np.linalg.norm(p - observer1_xyz, axis=-1)
     b_1[observer1.lon < p_lon] *= -1
-    b_2 = get_distance(observer2_xyz, p)
+    b_2 = np.linalg.norm(p - observer2_xyz, axis=-1)
     b_2[observer2.lon < p_lon] *= -1
     observer1_ab = np.stack([a, b_1], axis=-1)
     observer2_ab = np.stack([a, b_2], axis=-1)
@@ -213,10 +215,6 @@ def triangulate(observer1, observer2, epipolar_origin,
                        obstime=observer1.obstime
                       ).transform_to(HeliocentricEarthEcliptic)
     return feature
-
-
-def get_distance(p1, p2):
-    return np.sqrt(((p2 - p1)**2).sum(axis=-1))
 
 
 def get_lon_from_xy(x, y):
