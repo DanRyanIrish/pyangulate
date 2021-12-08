@@ -1,3 +1,8 @@
+import copy
+
+import numpy as np
+
+from tie_pointing import utils
 
 
 def rotate_plane_to_xy(points):
@@ -21,33 +26,33 @@ def rotate_plane_to_xy(points):
         Rotation matrix.
     """
     # Sanitize inputs.
-    coord_axis = -2
-    vertex_axis = -1
+    component_axis = -2
+    coord_axis = -1
     nd = 3
     if points.ndim == 1:
         if len(points) == nd:
             points = points.reshape((nd, 1))
-    elif points.ndim < 1 or points.shape[coord_axis] != nd:
+    elif points.ndim < 1 or points.shape[component_axis] != nd:
         raise ValueError("Points must be at least 2-D with penultimate axis of length 3. "
                          f"Input shape: {points.shape}")
     # Derive unit vector normal to the plane in which the first two points lie.
     i = 0
     cross_points = []
-    while i < points.shape[vertex_axis] and len(cross_points) < 2:
+    while i < points.shape[coord_axis] and len(cross_points) < 2:
         point = points[..., i:i+1]
-        if not np.any(np.all(point == 0, axis=coord_axis)):
+        if not np.any(np.all(point == 0, axis=component_axis)):
             cross_points.append(point)
         i += 1
     if len(cross_points) < 2:
         raise ValueError("Could not find 2 sets of vertices not including the origin.")
     plane_normal = np.cross(*cross_points)
-    plane_normal /= np.linalg.norm(plane_normal, axis=coord_axis, keepdims=True)
-    rotation = derive_plane_rotation_matrix(plane_normal, np.array([0, 0, 1]), axis=coord_axis)
+    plane_normal /= np.linalg.norm(plane_normal, axis=component_axis, keepdims=True)
+    rotation = derive_plane_rotation_matrix(plane_normal, np.array([0, 0, 1]), axis=component_axis)
     xy_vertices = rotation @ points
     return xy_vertices[..., :2, :], rotation
 
 
-def derive_plane_rotation_matrix(plane, new_plane):
+def derive_plane_rotation_matrix(plane_normal, new_plane_normal):
     """Derive matrix that rotates one plane to another.
 
     Parameters
@@ -87,26 +92,30 @@ def derive_plane_rotation_matrix(plane, new_plane):
     ----------
     https://en.wikipedia.org/wiki/Rotation_matrix#Axis_and_angle
     """
-    coord_axis = -1
-    old_norm = np.linalg.norm(old_normal, axis=coord_axis)
-    new_norm = np.linalg.norm(new_normal, axis=coord_axis)
-    cos = dot_product_single_axis(old_normal, new_normal, axis=coord_axis) / (old_norm * new_norm)
+    component_axis = -1
+    old_norm = np.linalg.norm(plane_normal, axis=component_axis)
+    new_norm = np.linalg.norm(new_plane_normal, axis=component_axis)
+    cos = (utils.dot_product_single_axis(plane_normal, new_plane_normal, axis=component_axis)
+           / (old_norm * new_norm))
+    # If cos = 1, then old plane and new plane are parallel. Return identity matrix.
+    if (np.isscalar(cos) and cos == 1) or (cos == 1).all():
+        return np.repeat(np.eye(3), shape=list(cos.shape) + [3, 3])
     sin = np.sqrt(1 - cos**2)
     C = 1 - cos
-    rot_axis = np.cross(old_normal, new_normal, axis=coord_axis)
-    rot_axis /= np.linalg.norm(rot_axis, axis=coord_axis, keepdims=True)
+    rot_axis = np.cross(plane_normal, new_plane_normal, axis=component_axis)
+    rot_axis  = rot_axis / np.linalg.norm(rot_axis, axis=component_axis, keepdims=True)
     x_idx, y_idx, z_idx = 0, 1, 2
     blank_item = [slice(None)] * rot_axis.ndim
     item = copy.deepcopy(blank_item)
-    item[axis] = x_idx
+    item[component_axis] = x_idx
     x = rot_axis[tuple(item)]
     item = copy.deepcopy(blank_item)
-    item[axis] = y_idx
+    item[component_axis] = y_idx
     y = rot_axis[tuple(item)]
     item = copy.deepcopy(blank_item)
-    item[axis] = z_idx
+    item[component_axis] = z_idx
     z = rot_axis[tuple(item)]
-    R = np.empty(tuple(list(cos.shape) + [2]))
+    R = np.empty(tuple(list(cos.shape) + [3, 3]))
     R[..., 0, 0] = x**2 * C + cos
     R[..., 0, 1] = x * y * C - z * sin
     R[..., 0, 2] = x * z * C + y * sin
@@ -116,6 +125,9 @@ def derive_plane_rotation_matrix(plane, new_plane):
     R[..., 2, 0] = z * x * C - y * sin
     R[..., 2, 1] = z * y * C + x * sin
     R[..., 2, 2] = z**2 * C + cos
+    # If some planes are parallel, replace with their matrices with identity.
+    if not np.isscalar(cos) and (cos == 1).any():
+        R[cos == 1] = np.eye(3)
     return R
 
 
