@@ -70,6 +70,30 @@ def test_hee_from_hee_xyz():
     assert output_r == expected_r
 
 
+def test_convert_to_homogenous_coords_locations():
+    coords = np.array([[2, 2]]).T
+    component_axis = 0
+    coord_axis = 1
+    homogenous_idx = 0
+    hom = tie_pointing.convert_to_homogeneous_coords(
+        coords, vector=False, component_axis=component_axis,
+        coord_axis=coord_axis, homogeneous_idx=homogenous_idx)
+    expected = np.array([[1, 2, 2]]).T
+    assert np.allclose(hom, expected)
+
+
+def test_convert_to_homogenous_coords_vectors():
+    coords = np.array([[2, 2]])
+    component_axis = 1
+    coord_axis = 0
+    homogenous_idx = 0
+    output = tie_pointing.convert_to_homogeneous_coords(
+        coords, vector=True, component_axis=component_axis,
+        coord_axis=coord_axis, homogeneous_idx=homogenous_idx)
+    expected = np.array([[0, 2, 2]])
+    assert np.allclose(output, expected)
+
+
 def test_compute_isometry_matrix():
     # Define inputs.
     reps = 2
@@ -101,3 +125,30 @@ def test_compute_isometry_matrix():
     # Assert results are as expected.
     assert np.allclose(result, expected)
     assert np.allclose(inverse_result, hom_upper_left)
+
+
+def test_inscribe_max_area_ellipse_in_parallelogram():
+    vertices = np.array([[2, 0], [10, -1], [14, 3], [6, 4]]).T
+    ellipse = tie_pointing.inscribe_max_area_ellipse_in_parallelogram(vertices)
+    return ellipse
+    assert np.allclose(ellipse(0), np.array([12, 1]))
+    assert np.allclose(ellipse(np.pi/2), np.array([10, 3.5]))
+    assert np.allclose(ellipse(np.pi), np.array([4, 2]))
+    assert np.allclose(ellipse(-np.pi/2), np.array([6, -0.5]))
+
+
+def test_derive_projective_collineation_from_five_points():
+    points = np.array([[[1, 1, 1, 1], [2, 10, 14, 6], [0, -1, 3, 4]],
+                       [[1, 1, 1, 1], [2, 10, 14, 6], [0, -1, 3, 4]]])
+    images = np.array([[[1, 1, 1, 1], [-1, 1, 1, -1], [-1, -1, 1, 1]],
+                       [[1, 1, 1, 1], [-1, 1, 1, -1], [-1, -1, 1, 1]]])
+    point5 = np.array([[[1], [8], [1.5]],
+                       [[1], [8], [1.5]]])
+    image5 = np.array([[[1], [0], [0]],
+                       [[1], [0], [0]]])
+    expected = np.array([[[18, 0, 0], [-26, 4, -4], [-20, 1, 8]],
+                         [[18, 0, 0], [-26, 4, -4], [-20, 1, 8]]]) / 18
+    output = tie_pointing.derive_projective_collineation_from_five_points(
+        points, images, point5, image5)
+    #return output, expected[0], points, images, point5, image5
+    assert np.allclose(output, expected)
