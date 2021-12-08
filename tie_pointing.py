@@ -228,10 +228,6 @@ def get_lon_from_xy(x, y):
     lon[idx] = -1 * (2 * pi - lon[idx])
     return lon * u.rad
 
-def test_get_lon_from_xy():
-    x = np.arange(-1, 1.1, 0.5)[:, np.newaxis]
-    y = np.arange(-1, 1.1, 0.5)[np.newaxis, :]
-
 
 def calculate_3d_line_direction_vector(p, q):
     """Return direction vector (l, m n) for defining a line in 3-D
@@ -389,6 +385,224 @@ def hee_from_hee_xyz(x, y, z):
     return lon * u.rad, lat * u.rad, r
 
 
+def inscribe_ellipse(vertices):
+    # Rotate vertices to x-y plane
+    coord_axis = -1
+    vertex_axis = -2
+    # Rotate vertices to xy-plane
+    col_vertices = np.swapaxes(vertices, coord_axis, vertex_axis)
+    xy_col_vertices, R1 = rotate_plane_to_xy_plane(col_vertices)
+    R1_inv = np.linalg.inv(R1)
+    xy_vertices = np.swapaxes(col_vertices, coord_axis, vertex_axis)
+    # Get indices of vertices that will be in the
+    # lower left, lower right, upper right, upper left positions after transformation.
+    ll_idx, lr_idx, ur_idx, ul_idx, parallelograms_idx, quadrilaterals_idx = identify_vertices(xy_vertices)
+
+    # Define array to hold vertices of the ellipse, i.e. the center and
+    # a point at the end of the semi-major and semi-minor axes.
+    planes_shape = vertices.shape[:-2]
+    ellipse_vertices = np.zeros(tuple(list(planes_shape) + [3, 3]), dtype=float)
+
+    # Calculate ellipse vertices for parallelograms.
+    if parallelograms_idx.any():
+        ellipse_vertices[..., :2][parallelograms_idx] = inscribe_ellipse_in_parallelogram(
+            np.swapaxes(vertices[parallelograms_idx], coord_axis, vertex_axis),
+            ll_idx, lr_idx, ur_idx, ul_idx)
+
+    # Calculate ellipse vertices for quadrilaterals.
+    if quadrilaterals_idx.any():
+        ellipse_vertices[..., :2][quadrilaterals_idx] = inscribe_ellipse_in_quadrilateral(
+            vertices[quadrilaterals_idx], ll_idx, lr_idx, ur_idx, ul_idx)
+
+    # Convert 2-D ellipse vertices to 3-D coords
+    ellipse_vertices = R1_inv @ ellipse_vertices
+
+    return ellipse_vertices
+
+
+def identify_vertices(xy_vertices):
+    # Determine which vertices should be lower left, lower right, upper right and upper left
+    # after the the isometry is applied.
+    # vertices must have shape (..., 4, 3), i.e. (..., vertices, coords)
+    coord_axis = -1
+    vertex_axis = -2
+
+    # Select lower left vertex (relative to final position after transformation)
+    # as the one closest to the origin.
+    norms = np.linalg.norm(xy_vertices, axis=coord_axis)
+    tmp = norms - norms.min(axis=vertex_axis)
+    ll_idx = np.isclose(norms - norms.min(axis=vertex_axis, keepdims=True), 0)  #TODO: expand bool idx to coord axis.
+    # Find vertex diagonal to lower left one.
+    diagonal_norm = np.linalg.norm(xy_vertices - xy_vertices[ll_idx], axis=coord_axis)
+    tmp_vertex_axis = vertex_axis + 1 if coord_axis > vertex_axis else vertex_axis
+    ur_idx = np.isclose(diagonal_norm - diagonal_norm.max(axis=tmp_vertex_axis, keepdims=True), 0) #TODO: expand bool idx to coord axis.
+    # Get axes of corner vertices relative to lower left.
+    # To do this in an array-based way, define v1 as the vertex closer
+    # to lower left and v2 as the further from lower left.
+    diagonal_norm_sorted = diagonal_norm.sort(axis=tmp_vertex_axis)
+    v1_idx = np.isclose(diagonal_norm - diagonal_norm_sorted[...,1], 0) #TODO: expand bool idx to coord axis.
+    v2_idx = np.isclose(diagonal_norm - diagonal_norm_sorted[...,2], 0) #TODO: expand bool idx to coord axis.
+    # Then set the lower right vertex as the one whose line with the lower left
+    # forms a negative with diagonal.
+    diagonal = xy_vertices[ur_idx] - xy_vertices[ll_idx]
+    v1 = xy_vertices[v1_idx] - xy_vertices[ll_idx]
+    v2 = xy_vertices[v2_idx] - xy_vertices[ll_idx]
+    v1_theta = np.arctan2(v1[..., 1], v1[..., 0]) - np.arctan2(diagonal[..., 1], diagonal[..., 0])
+    lr_idx = np.zeros(xy_vertices.shape, dtype=bool)
+    ul_idx = np.zeros(xy_vertices.shape, dtype=bool)
+    lr_idx[v1_theta < 0] = v1_theta[v1_theta < 0]
+    lr_idx[v1_theta > 0] = v2_theta[v1_theta > 0]
+    ul_idx[v1_theta > 0] = v1_theta[v1_theta > 0]
+    ul_idx[v1_theta < 0] = v2_theta[v1_theta < 0]
+    # Now determine which pairs of lines are parallel, if any.
+    # Let m0 be the slope of the line from lower left to lower right,
+    # m1 the slope from lower right to upper right,
+    # m2 the slope from upper right to upper left
+    # and m3 the sloper from upper left to lower left.
+    ll = xy_vertices[ll_idx]
+    lr = xy_vertices[lr_idx]
+    ur = xy_vertices[ur_idx]
+    ul = xy_vertices[ul_idx]
+    m0 = (lr[..., 1] - ll[..., 1]) / (lr[..., 0] - ll[..., 0])
+    m1 = (ur[..., 1] - lr[..., 1]) / (ur[..., 0] - lr[..., 0])
+    m2 = (ul[..., 1] - ur[..., 1]) / (ul[..., 0] - ur[..., 0])
+    m3 = (ll[..., 1] - ul[..., 1]) / (ll[..., 0] - ul[..., 0])
+    # Find cases where quadrilateral has two parallel sides and slopes m1 and m3 are parallel.
+    # In these cases, the lower left point must be changed to one adjacent to it.
+    # Otherwise algorithm for such quadrilaterals will not work.
+    vertical_parallels = np.isclose(m1, m3)
+    n_parallel_pairs = vertical_parallels + np.isclose(m0, m2)
+    wrong_ll_idx = np.logical_and(n_parallel_pairs == 1, vertical_parallels)
+    if wrong_ll_idx.any():
+        ll_idx[wrong_ll_idx], lr_idx[wrong_ll_idx], ur_idx[wrong_ll_idx], ll_idx[wrong_ll_idx] = \
+            lr_idx[wrong_ll_idx], ur_idx[wrong_ll_idx], ul_idx[wrong_ll_idx], ll_idx[wrong_ll_idx]
+
+    # Compute ellipse points for parallograms and other quadrilaterals separately.
+    parallelograms_idx = n_parallel_pairs == 2
+    quadrilaterals_idx = np.logical_not(parallelograms)
+
+    return ll_idx, lr_idx, ur_idx, ul_idx, parallelograms_idx, quadrilaterals_idx
+
+
+def rotate_plane_to_xy_plane(points):
+    """Rotate locations on the same 2-D plane to the x-y plane.
+
+    Parameters
+    ----------
+    points: `numpy.ndarray`
+        Points on the same 2-D in 3-D space. Can have nay shape as long as penultimate
+        axis gives the 3-D coordinates of the points.
+        The order of the coordinates must be (x, y, z)
+    return_matrix: `bool`
+        If True, the rotation matrix used is also returned.
+
+    Returns
+    -------
+    xy_points: `numpy.ndarray`
+        Points rotated to x-y plane. As all z-coords are now 0, last axis is 2-D
+        and only gives x-y values.
+    rotation: `numpy.ndarray`
+        Rotation matrix.
+    """
+    # Sanitize inputs.
+    coord_axis = -2
+    vertex_axis = -1
+    nd = 3
+    if points.ndim == 1:
+        if len(points) == nd:
+            points = points.reshape((nd, 1))
+    elif points.ndim < 1 or points.shape[coord_axis] != nd:
+        raise ValueError("Points must be at least 2-D with penultimate axis of length 3. "
+                         f"Input shape: {points.shape}")
+    # Derive unit vector normal to the plane.
+    i = 0
+    cross_points = []
+    while i < points.shape[vertex_axis] and len(cross_points) < 2:
+        point = points[..., i:i+1]
+        if not np.any(np.all(point == 0, axis=coord_axis)):
+            cross_points.append(point)
+        i += 1
+    if len(cross_points) < 2:
+        raise ValueError("Could not find 2 sets of vertices not including the origin.")
+    plane_normal = np.cross(*cross_points)
+    plane_normal /= np.linalg.norm(plane_normal, axis=coord_axis, keepdims=True)
+    rotation = derive_plane_rotation_matrix(plane_normal, np.array([0, 0, 1]), axis=coord_axis)
+    xy_vertices = rotation @ points
+    return xy_vertices[..., :2, :], rotation
+
+
+def derive_plane_rotation_matrix(plane, new_plane):
+    """Derive matrix that rotates one plane to another.
+
+    Parameters
+    ----------
+    plane: `numpy.ndarray`
+        A vector normal to the original plane. Vector axis must be length 3,
+        i.e. vector must be 3-D. If array is >1D, the coordinates of the vector
+        must be given by last axis. The order of the coordinates must be (x, y, z).
+        Other dimensions represent different planes that need rotating.
+    new_plane: `numpy.ndarray`
+        A vector normal to the plane to rotate to. Can have the following dimensionalities
+        which are interpretted in the following ways:
+        Same as plane arg:
+            Last axis corresponds to (x, y, z) coordinates while other axes give
+            the planes which the corresponding original planes are to be rotated to.
+            Thus, multiple rotations are derived simultaneously.
+        1-D:
+            All original planes are rotated to this single new plane.
+        N-D if plane arg is 1-D:
+            Last axis corresponds to (x, y, z) coordinates while other axes give
+            different planes for which rotations from original plane are desired.  Again,
+            this means multiple rotations are calculated at once, but this time all
+            from the same original plane.
+
+    Returns
+    -------
+    R: `numpy.ndarray`
+        The 3x3 rotation matrix. If input arrays are >1D, the last two axis will represent
+        the matrix while preceding axes will correspond to the non-vector axes of the
+        input arrays, i.e. the axes not corresponding to the axis kwarg.
+
+    Notes
+    -----
+    Formula for rotation matrix is outline at reference [1].
+
+    References
+    ----------
+    https://en.wikipedia.org/wiki/Rotation_matrix#Axis_and_angle
+    """
+    coord_axis = -1
+    old_norm = np.linalg.norm(old_normal, axis=coord_axis)
+    new_norm = np.linalg.norm(new_normal, axis=coord_axis)
+    cos = dot_product_single_axis(old_normal, new_normal, axis=coord_axis) / (old_norm * new_norm)
+    sin = np.sqrt(1 - cos**2)
+    C = 1 - cos
+    rot_axis = np.cross(old_normal, new_normal, axis=coord_axis)
+    rot_axis /= np.linalg.norm(rot_axis, axis=coord_axis, keepdims=True)
+    x_idx, y_idx, z_idx = 0, 1, 2
+    blank_item = [slice(None)] * rot_axis.ndim
+    item = copy.deepcopy(blank_item)
+    item[axis] = x_idx
+    x = rot_axis[tuple(item)]
+    item = copy.deepcopy(blank_item)
+    item[axis] = y_idx
+    y = rot_axis[tuple(item)]
+    item = copy.deepcopy(blank_item)
+    item[axis] = z_idx
+    z = rot_axis[tuple(item)]
+    R = np.empty(tuple(list(cos.shape) + [2]))
+    R[..., 0, 0] = x**2 * C + cos
+    R[..., 0, 1] = x * y * C - z * sin
+    R[..., 0, 2] = x * z * C + y * sin
+    R[..., 1, 0] = y * x * C + z * sin
+    R[..., 1, 1] = y**2 * C + cos
+    R[..., 1, 2] = y * z * C - x * sin
+    R[..., 2, 0] = z * x * C - y * sin
+    R[..., 2, 1] = z * y * C + x * sin
+    R[..., 2, 2] = z**2 * C + cos
+    return R
+
+
 def compute_isometry_matrices(new_origin, new_y, plane_normal):
     """
     Calculate the affine transformation matrix that does the following:
@@ -437,8 +651,8 @@ def compute_isometry_matrices(new_origin, new_y, plane_normal):
     and the last element in the final row/column is 1.
     N-D points are then made compatible with these transformation by appending a 1
     for their N+1th (4th) dimensions, while vectors have a 0 appended.
-    This is known as "homogenous coordinates" where the real coordinates are simply
-    the first N elements in the homogenous coordinate.
+    This is known as "homogeneous coordinates" where the real coordinates are simply
+    the first N elements in the homogeneous coordinate.
     This way of representing translation is the same as shearing (a linear transformation)
     in a N+1th dimensions and then projecting the new position onto the N-D plane,
     i.e. the value to the N+1th coordinate is 0.
@@ -491,9 +705,9 @@ def compute_isometry_matrices(new_origin, new_y, plane_normal):
     # To calculate the angle between this line and the y-axis,
     # apply the translation and R1 rotation, and then use arctan on the resulting
     # intermediate (x,y)/(u,v) coordinates.
-    # Start by converting the new_y coord to homogenous coords, i.e. an append
+    # Start by converting the new_y coord to homogeneous coords, i.e. an append
     # a 4th point to final axis whose value is 1.  See Notes in docstring.
-    hom_new_y = convert_to_homogenous_coords(new_y)
+    hom_new_y = convert_to_homogeneous_coords(new_y)
     # Re-represent last axis as a 4x1 matrix rather than a length-4 homogeneous location coord.
     hom_new_y = np.expand_dims(hom_new_y, -1)
     partial_isometry = R1 @ T
@@ -541,14 +755,20 @@ def compute_isometry_matrices(new_origin, new_y, plane_normal):
     return isometry, inverse_isometry
 
 
-def convert_to_homogenous_coords(coords, vector=False, axis=-1):
+def convert_to_homogeneous_coords(coords, vector=False,
+                                  component_axis=-1, coord_axis=-2, homogeneous_idx=-1):
     hom_shape = np.array(coords.shape)
-    hom_shape[..., -1] = 1
+    hom_shape[component_axis] = 1
     if vector:
-        hom_column = np.zeroes(hom_shape)
+        hom_component = np.zeros(hom_shape)
     else:
-        hom_column = np.ones(hom_shape)
-    return np.concatenate((coords, hom_column), axis=axis)
+        hom_component = np.ones(hom_shape)
+    c = (coords, hom_component)
+    if np.isclose(homogeneous_idx, 0):
+        c = c[::-1]
+    elif not np.isclose(homogeneous_idx, -1):
+        raise ValueError(f"homogeneous_idx must be 0 or -1. Given value = {homogeneous_idx}")
+    return np.concatenate(c, axis=component_axis)
 
 
 def inscribe_ellipse_in_quadrilateral(vertices):
@@ -574,10 +794,11 @@ def inscribe_ellipse_in_quadrilateral(vertices):
     plane_normal = np.cross(*cross_vertices)
     isometry, inverse_isometry = compute_isometry_matrices(vertices[..., 0, :],
                                                            vertices[..., 2, :], plane_normal)
-    # Convert vertices to homogenous coords, (i.e. add a 4th coord equalling 1)
+    # Convert vertices to homogeneous coords, (i.e. add a 4th coord equalling 1)
     # as required for affine transformations, and represent last axis as a 4x1 matrix
     # for purposes of matrix multiplication rather than a length-4 row vector.
-    hom_vertices = np.expand_dims(convert_to_homogenous_coords(vertices, axis=-1), -1)
+    hom_vertices = np.expand_dims(
+            convert_to_homogeneous_coords(vertices, component_axis=-1, coord_axis=-2), -1)
     # Apply isometry and extract A, B, C, s, t.
     iso_vertices = (isometry @ hom_vertices)[..., 0]  # Remove dummy axis retained by mat. mul.
     A = iso_vertices[..., 1, 0]
@@ -643,29 +864,33 @@ def dot_product_single_axis(a, b, axis=-1):
     return (a * b).sum(axis=axis)
 
 
-def max_area_ellipse_in_parallelogram(vertices, homogenous_axis=-1):
-    """Derive parametic equation of the maximum-area ellipse within a parallelogram.
+def inscribe_max_area_ellipse_in_parallelogram(vertices):
+    component_axis = -2
+    h, k, a, b, c, d = get_equation_of_max_area_ellipse_in_parallelogram(vertices)
+    major_point, minor_point = get_ellipse_semi_axes_coords(h, k, a, b, c, d)
+    center = np.stack((h, k), axis=component_axis)
+    return center, major_point, minor_point
+
+
+def get_equation_of_max_area_ellipse_in_parallelogram(vertices):
+    """Derive parametic equation of the maximum-area ellipse inscribed in a parallelogram.
 
     Parameters
     ----------
     vertices: `numpy.ndarray`
-        3x4 array giving the 2-D homogenous coordinates of the 4 vertices
-        of the parallelogram. The 1st axis gives the coordinates of a single vertex
-        while the 2nd axis iterates from vertex to vertex.
+        2x4 array giving the 2-D x-y coordinates of the 4 vertices of the parallelogram.
+        The 1st axis gives the coordinates of a single vertex while
+        the 2nd axis iterates from vertex to vertex.
         The vertices must be in the following order:
-        lower left, lower right, upper left, upper right.
-    theta:
-        The angle of the point on the ellipse for which the coords are desired.
-    homogenous_axis: `int`
-        The position of the homogenous axis. Must be 0 or -1.
-        If 0, the first element of each coordinate is the homogenous element.
-        If -1, the last element of each coordinate is the homogenous element.
+        lower left, lower right, upper right, upper left.
 
     Returns
     -------
-    parametric_ellipse: function
-        A function taking the angle within the ellipse, theta, and returning the
-        x-y coordinate on the ellipse at that angle.
+    h, k:
+        The x-y coordinates of the center of the ellipse.
+    a, b, c, d:
+        The coefficients of the parametric ellipse equation of the form:
+        x = h + a*cos(phi) + b*cos(phi);  y = k + c(cos(phi) + d*sin(phi)
 
     Notes
     -----
@@ -704,9 +929,9 @@ def max_area_ellipse_in_parallelogram(vertices, homogenous_axis=-1):
     correspond to the point on the unit circle at the angle theta.
 
     Homogenous Coordinates Convention
-    Above we have used the convention of placing the homogenous coordinate at the
+    Above we have used the convention of placing the homogeneous coordinate at the
     front of the point vectors. However, the above workflow works equally well if the
-    homogenous coordinates are placed at the end of the vectors. The only result is that
+    homogeneous coordinates are placed at the end of the vectors. The only result is that
     the x-y values in the parametric ellipse equation will correspond to the 1st and 2nd
     entries instead of the 2nd and 3rd entries.  (Or if the points are 3-D, the x, y, z
     values will correspond to the 1st, 2nd and 3rd entries rather than the 2nd, 3rd, and
@@ -721,51 +946,155 @@ def max_area_ellipse_in_parallelogram(vertices, homogenous_axis=-1):
         Microsoft Research Techical Report MSR-TR-2010-63,
         https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/MSR-TR-2010-63.pdf
     """
-    # Sanitize inputs
-    homogenous_is_last = True
-    if np.isclose(homogenous_axis, 0):
-        homogenous_is_last = False
-    elif not np.isclose(homogenous_axis, -1):
-        raise ValueError(f"homogenous_axis must be 0 or -1. Given value: {homogenous_axis}")
     # Calculate center of parallelogram, given by the midpoint of the diagonals.
     # Since the midpoints of both diagonals are equal by definition,
     # we only need to use 1 diagonal.
-    center = (vertices[:, 0] + vertices[:, 3]) / 2
+    center = (vertices[..., 0:1] + vertices[..., 2:3]) / 2
 
-    # Define coordinates of the 2-unit square. Include center for convenience now and
-    # extract later.
-    square_vertices = np.array([[-1, -1], [1, -1], [-1, 1], [1, 1], [0, 0]]).T
-    # Convert to homogenous coords
-    hom_values = (np.ones((1, 5)), square_vertices)
-    if homogenous_is_last:
-        hom_values = hom_values[::-1]
-    square_vertices = np.concatenate(hom_values, axis=0)
-    # Extract center from vertices array.
-    square_center = square_vertices[:, -1:]
-    square_vertices = square_vertices[:, :-1]
+    # Define coordinates of the 2-unit square.
+    square_vertices = np.array([[-1, -1], [1, -1], [1, 1], [-1, 1]]).T
+    square_center = np.array([[0, 0]]).T
+    # Convert to homogeneous coords.
+    homogeneous_idx = 0
+    component_axis = -2
+    vertex_axis = -1
+    vertices = convert_to_homogeneous_coords(
+        vertices, vector=False, component_axis=component_axis, coord_axis=vertex_axis,
+        homogeneous_idx=homogeneous_idx)
+    square_vertices = convert_to_homogeneous_coords(
+        square_vertices, vector=False, component_axis=component_axis, coord_axis=vertex_axis,
+        homogeneous_idx=homogeneous_idx)
+    center = convert_to_homogeneous_coords(
+        center, vector=False, component_axis=component_axis, coord_axis=vertex_axis,
+        homogeneous_idx=homogeneous_idx)
+    square_center = convert_to_homogeneous_coords(
+        square_center, vector=False, component_axis=component_axis, coord_axis=vertex_axis,
+        homogeneous_idx=homogeneous_idx)
 
     # Calculate projective collineation
     T = derive_projective_collineation_from_five_points(vertices, square_vertices,
-                                                        center, square_center,
-                                                        homogenous_axis=homogenous_axis)
+                                                        center, square_center)
     T_inv = np.linalg.inv(T)
+    # Extract equation coefficients.
+    blank_item = [slice(None)] * T_inv
+    h = T_inv[..., 1, homogeneous_idx]
+    k = T_inv[..., 2, homogeneous_idx]
+    idx0 = 1 + homogeneous_idx
+    a = T_inv[..., idx0, idx0]
+    b = T_inv[..., idx0, idx0+1]
+    c = T_inv[..., idx0+1, idx0]
+    d = T_inv[..., idx0+1, idx0+1]
 
-    # Calculate parametric equation of the ellipse, e.
-    def ellipse(T, homogenous_is_last, theta):
-        if homogenous_is_last:
-            circle = np.array([np.cos(theta), np.sin(theta), 1])
-            item = slice(None, 2)
-        else:
-            circle = np.array([1, np.cos(theta), np.sin(theta)])
-            item = slice(1, None)
-        ellipse_xy = T_inv @ circle
-        return ellipse_xy[item]
-
-    return partial(ellipse, T, homogenous_is_last)
+    return h, k, a, b, c, d
 
 
-def derive_projective_collineation_from_five_points(points, images, point5, image5,
-                                                    homogenous_axis=-1):
+def get_ellipse_semi_axes_coords(h, k, a, b, c, d):
+    """
+    Calculate coords of one end of the semi-major and -minor axes of an ellipse.
+
+    To do this, the parametric equation of the ellipse is used:
+    x = h + a*cos(phi) + bsin(phi); y = k + c*cos(phi) + d*sin(phi)
+    where (h, k) and the (x, y) coordinates of the ellipse center and
+    phi is the angle at which the ellipse coordinates are desired.
+
+    Parameters
+    ----------
+    h, k: `numpy.ndarray` or `float`
+        The x-y coordinates of the ellipse center
+        Must be same shape.
+    a, b, c, d: `numpy.ndarray` or `float`
+        Coefficients of the parametric ellipse equation as a function of angle.
+
+    Returns
+    -------
+    semi_major_point:
+        The semi_major axis.
+    semi_minor_point:
+        The semi-minor axis.
+
+    Notes
+    -----
+    The algorithm used in this function is based on the follow derivation.
+    Given the parametric equation of an ellipse as a function of angle, phi,
+        x = h + a*cos(phi) + bsin(phi); y = k + c*cos(phi) + d*sin(phi)
+    where (h, k) are the (x, y) coordinates of the ellipse center,
+    we can determine the radius of the ellipse at phi using the distance formula:
+        r^2 = (x - h)^2 + (y - k)^2
+            = (a*cos(phi) + bsin(phi))^2 + (c*cos(phi) + d*sin(phi))^2
+    Rearranging this equation gives
+        r^2 = (a^2 + c^2)cos^2(phi) + 2(ab + cd)cos(phi)sin(phi) + (b^2 + d^2)sin^2(phi)
+    The semi-major and -minor axes are the maximum and minimum of this equation.
+    To find these, we set its derivative to zero and solve for phi.
+    This will result in two valid solutions, corresponding to the semi-major and -minor axes
+    Taking the derivative and rearranging gives:
+        d(r^2)/d(phi) = 2Pcos^2(phi) + 2Qcos(phi)sin(phi) - 2Psin^2(phi)
+    where
+        P = ab + cd;  Q = b^2 + d^2 - a^2 - c^2
+    Setting the derivative to 0 and dividing both sides by 2P gives
+        cos^2(phi) + (P/Q)cos(phi)sin(phi) - sin^2(phi) = 0
+    This can be factorized with initially unknown coefficients, u, v, s, t as:
+        (u*cos(phi) + v*sin(phi)(s*cos(phi) + t*sin(phi)) = 0
+    Expanding this factorization and equating the coefficients to the form above gives:
+        us = 1 => s = 1/u;  vt = -1 => t = -1/v;  us + vs = P/Q
+    The above equation can only be 0 when one of the factors is zero:
+        u*cos(phi) + v*sin(phi) = 0;  OR  s*cos(phi) + t*sin(phi) = 0
+         sin(phi) / cos(phi) = -u/v;       sin(phi) / cos(phi) = -s/t
+                    tan(phi) = -u/v;                  tan(phi) = -s/t
+    Recalling the ut + vs = P/Q and substituting for s and t gives:
+                            ut + vs = P/Q
+        =>               -u/v + v/u = P/Q
+        =>   tan(phi) -  1/tan(phi) = P/Q
+        => tan^2(phi) - (P/Q)tan(phi) - 1 = 0
+    This is a quadratic in tan(phi). So to get the two possible solutions
+    (i.e. semi-major and semi-minor axes) we use the standard quadratic root equation
+    where (letting R = -P/Q) A = 1, B = R, C = -1
+        tan(phi) = (-B +/- (B^2 - 4AC)^0.5) / (2A)
+                 = (-R +/- (R^2 + 4)^0.5) / 2
+    where R, expressed in terms of the original coefficients is:
+        R = (a^2 + c^2 - b^2 - d^2) / (ab + cd)
+    Taking the arctan of both sides gives the two angles at which the semi-major and -minor
+    axes are located. Entering these angles into the parametric ellipse equation gives
+    the points at one end the axes. If points at both ends of the major and minor axes are
+    wanted, the negative of the above angles and also be plugged into the ellipse equation
+    If the values of the semi-major and semi-minor axes are wanted, it is only required
+    to compute these points' distances from the ellipse center using the
+    standard distance formula.
+
+    Note that tan has a periodicity of pi. This guarantees that our two above solutions
+    correspond the semi-major and semi-minor axes, and not two symmetric solutions
+    to just the semi-major (or semi-minor) axis.
+    """
+    if not (np.isscalar(h) and np.isscalar(k)) or h.shape != k.shape:
+        raise ValueError("h and k must be same shape.")
+    # Derive the angles at which the semi-major and -minor axes are located.
+    # See Notes section of docstring.
+    R = (a**2 + c**2 - b**2 - d**2) / (a*b + c*d)
+    phi1 = np.arctan((-R + np.sqrt(R**2 + 4)) / 2)
+    phi2 = np.arctan((-R - np.sqrt(R**2 + 4)) / 2)
+    # Find the points on the ellipse corresponding to the semi-major and -minor axes.
+    parametric_ellipse = partial(_parametric_ellipse, a, b, c, d)
+    x1, y1 = _parametric_ellipse(phi1)
+    x2, y2 = _parametric_ellipse(phi2)
+    # Caculate the semi- axes from the distance between the above points and
+    # the ellipse center.
+    semi_axis1 = np.sqrt((x1 - h)**2 + (y1 - k)**2)
+    semi_axis2 = np.sqrt((x2 - h)**2 + (y2 - k)**2)
+    # Find major and minor axes.
+    xy_axis = -1
+    semi_axis = np.stack((semi_axis1, semi_axis2), axis=xy_axis)
+    semi_major = semi_axes.max(axis=xy_axis)
+    semi_minor = semi_axes.min(axis=xy_axis)
+
+    return semi_major, semi_minor
+
+
+def _parametric_ellipse(h, k, a, b, c, d, phi):
+    x = h + a * np.cos(phi) + b * np.sin(phi)
+    y = k + c * np.cos(phi) + d * np.sin(phi)
+    return x, y
+
+
+def derive_projective_collineation_from_five_points(points, images, point5, image5):
     """Derive projection collineation mapping points to their images.
 
     Requires 5 points and their images.
@@ -773,28 +1102,24 @@ def derive_projective_collineation_from_five_points(points, images, point5, imag
     Parameters
     ----------
     points: `numpy.ndarray`
-        n+1 x 4 array of 4 points in homogenous coordinates
-        where n is the number of physical dimensions.
+        n x 4 array of 4 points.
     images: `numpy.ndarray`
-        n+1 x 4 array of 4 images of the above points after the transformation.
+        n x 4 array of 4 images of the above points after the transformation.
     point5: `numpy.ndarray`
-        n+1 x 1 array of a 5th point used in the calculation
+        n x 1 array of a 5th point used in the calculation.
     image5: `numpy.ndarray`
-        n+1 x 1 array giving the image of the 5th point after transformation.
-    homogenous_axis: `int`
-        Indicates whether the first of last row of the above coordinates holds
-        the homogenous element.  Can take values of 0 or -1.
+        n x 1 array giving the image of the 5th point after transformation.
 
     Returns
     -------
     T: `numpy.ndarray`
-        n+1 x n+1 matrix defining the transformation from the points to their images.
+        n x n matrix defining the transformation from the points to their images.
 
     Notes
     -----
     Given 5 points and their images after transformation, we can define a projective
     collineation (affine transformation) that maps the 5 points to their images.
-    Let the homogenous coordinates of the 5 points be:
+    Let the homogeneous coordinates of the 5 points be:
     m1 = [1 ]  m2 = [1 ]  m3 = [1 ]  m4 = [1 ]  m5 = [1 ]
          [w1]       [x1]       [y1]       [z1]       [v1]
          [w2]       [x2]       [y2]       [z2]       [v2]
@@ -820,11 +1145,11 @@ def derive_projective_collineation_from_five_points(points, images, point5, imag
     A_2 is found is exactly the same way using the matrix M = [M1 M2 M3 M4] and M5.
 
     In the above description we have assumed that the points given are 2-D and that the
-    homogenous element is given in the first rown. However, the same workflow works
+    homogeneous element is given in the first row. However, the same workflow works
     equally well in 3-D by simply adding a 3rd dimension to the vectors describing the
-    original and image points.  It also works if the homogenous element is in the last row.
+    original and image points.  It also works if the homogeneous element is in the last row.
     The resulting matrix will differ in that it will be suited to transformations
-    where the homogenous element of the locations are in the last row, but should give
+    where the homogeneous element of the locations are in the last row, but should give
     the same transformations.
 
     References
@@ -836,12 +1161,13 @@ def derive_projective_collineation_from_five_points(points, images, point5, imag
     # Calculate matrix A1. See Notes in docstring.
     points_inv = np.linalg.pinv(points)  # inverse matrix of vertices.
     lam = points_inv @ point5
-    A1 = points * lam.T
+    A1 = points * np.swapaxes(lam, -2, -1)
+    # Use swapaxes above instead of transpose as we only want to transpose last 2 axes.
     A1_inv = np.linalg.pinv(A1)
     # Repeat for calculation of matrix A2.  See Notes in docstring.
     images_inv = np.linalg.pinv(images)
     lam_prime = images_inv @ image5
-    A2 = images * lam_prime.T
+    A2 = images * np.swapaxes(lam_prime, -2, -1)
     # Calculate the projective collineation (affine transformation) from
     # parallelogram vertices to 2-unit square vertices.  See Notes in docstring.
     return A2 @ A1_inv
