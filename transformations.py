@@ -12,10 +12,8 @@ def rotate_plane_to_xy(points):
     ----------
     points: `numpy.ndarray`
         Points on the same 2-D in 3-D space. Can have any shape but penultimate axis
-        must give the 3-D coordinates of the points.
-        The order of the coordinates must be (x, y, z)
-    return_matrix: `bool`
-        If True, the rotation matrix used is also returned.
+        must give the 3-D coordinates of the points and the final axis must represent
+        points in a single plane.  The order of the coordinate components must be (x, y, z).
 
     Returns
     -------
@@ -45,11 +43,13 @@ def rotate_plane_to_xy(points):
         i += 1
     if len(cross_points) < 2:
         raise ValueError("Could not find 2 sets of vertices not including the origin.")
-    plane_normal = np.cross(*cross_points)
-    plane_normal /= np.linalg.norm(plane_normal, axis=component_axis, keepdims=True)
-    rotation = derive_plane_rotation_matrix(plane_normal, np.array([0, 0, 1]), axis=component_axis)
-    xy_vertices = rotation @ points
-    return xy_vertices[..., :2, :], rotation
+    plane_normal = np.cross(*cross_points, axis=component_axis)
+    plane_normal = plane_normal / np.linalg.norm(plane_normal, axis=component_axis, keepdims=True)
+    rotation = derive_plane_rotation_matrix(plane_normal[..., 0], np.array([0, 0, 1]))
+    xy_points = rotation @ points
+    item = [slice(None)] * points.ndim
+    item[component_axis] = slice(0, 2)
+    return xy_points, rotation
 
 
 def derive_plane_rotation_matrix(plane_normal, new_plane_normal):
@@ -59,8 +59,7 @@ def derive_plane_rotation_matrix(plane_normal, new_plane_normal):
     ----------
     plane: `numpy.ndarray`
         A vector normal to the original plane. Vector axis must be length 3,
-        i.e. vector must be 3-D. If array is >1D, the coordinates of the vector
-        must be given by last axis. The order of the coordinates must be (x, y, z).
+        i.e. vector must be 3-D. The order of the coordinates must be (x, y, z).
         Other dimensions represent different planes that need rotating.
     new_plane: `numpy.ndarray`
         A vector normal to the plane to rotate to. Can have the following dimensionalities

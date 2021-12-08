@@ -4,7 +4,22 @@ from tie_pointing import transformations
 
 
 def test_rotate_plane_to_xy():
-    pass
+    points = np.array([[[1, 1, 1], [0.5, 0, 0], [4, -1, -1]],
+                       [[1, 1, -1], [-7, 0, 0], [3, -1, 1]]])
+    points = np.swapaxes(points, -1, -2)
+    output_points, output_matrix = transformations.rotate_plane_to_xy(points)
+    expected_points = np.array([[[1, -2**0.5, 0], [0.5, 0, 0], [4, 2**0.5, 0]],
+                                [[1, 2**0.5, 0], [-7, 0, 0], [3, -2**0.5, 0]]])
+    expected_points = np.swapaxes(expected_points, -1, -2)
+    a = 2**(-0.5)
+    expected_matrix = np.array([[[1, 0, 0],
+                                 [0, -a, -a],
+                                 [0, a, -a]],
+                                [[1, 0, 0],
+                                 [0, a, -a],
+                                 [0, a, a]]])
+    assert np.allclose(output_points, expected_points)
+    assert np.allclose(output_matrix, expected_matrix)
 
 
 def test_derive_plane_rotation_matrix():
