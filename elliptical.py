@@ -108,11 +108,36 @@ def identify_vertices(xy_vertices):
 
 
 def inscribe_max_area_ellipse_in_parallelogram(vertices):
+    """Derive the maximum-area ellipse inscribed in a parallelogram.
+
+    The ellipse is represented in the returned values as the coordinates of
+    the ellipse center, a point at one end of the major-axis and minor-axis.
+
+    Parameters
+    ----------
+    vertices: `numpy.ndarray`
+        ...,2x4 array giving the 2-D x-y coordinates of the 4 vertices of the parallelogram.
+        The penultimate axis gives the coordinates of a single vertex while
+        the last axis iterates from vertex to vertex.
+        Other axes and take any shape and can be used to represent other ellipses.
+
+    Returns
+    -------
+    center: `numpy.ndarray`
+        The x-y coordinates of the center of the ellipse.
+        Has same shape as vertices with axes having the same meaning.
+    major_coord: `numpy.ndarray` 
+        The x-y coordinates of the point at one end of the major-axis.
+        Has same shape as vertices with axes having the same meaning.
+    minor_coord: `numpy.ndarray` 
+        The x-y coordinates of the point at one end of the minor-axis.
+        Has same shape as vertices with axes having the same meaning.
+    """
     component_axis = -2
     h, k, a, b, c, d = get_equation_of_max_area_ellipse_in_parallelogram(vertices)
-    major_point, minor_point = get_ellipse_semi_axes_coords(h, k, a, b, c, d)
+    major_coord, minor_coord = get_ellipse_semi_axes_coords(h, k, a, b, c, d)
     center = np.stack((h, k), axis=component_axis)
-    return center, major_point, minor_point
+    return center, major_coord, minor_coord
 
 
 def get_equation_of_max_area_ellipse_in_parallelogram(vertices):
@@ -121,11 +146,12 @@ def get_equation_of_max_area_ellipse_in_parallelogram(vertices):
     Parameters
     ----------
     vertices: `numpy.ndarray`
-        2x4 array giving the 2-D x-y coordinates of the 4 vertices of the parallelogram.
-        The 1st axis gives the coordinates of a single vertex while
-        the 2nd axis iterates from vertex to vertex.
+        ...,2x4 array giving the 2-D x-y coordinates of the 4 vertices of the parallelogram.
+        The penultimate axis gives the coordinates of a single vertex while
+        the last axis iterates from vertex to vertex.
         The vertices must be in the following order:
         lower left, lower right, upper right, upper left.
+        Other axes and take any shape and can be used to represent other ellipses.
 
     Returns
     -------

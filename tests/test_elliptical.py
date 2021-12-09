@@ -12,13 +12,15 @@ from tie_pointing import elliptical
 
 
 def test_inscribe_max_area_ellipse_in_parallelogram():
-    vertices = np.array([[2, 0], [10, -1], [14, 3], [6, 4]]).T
-    ellipse = elliptical.inscribe_max_area_ellipse_in_parallelogram(vertices)
-    return ellipse
-    assert np.allclose(ellipse(0), np.array([12, 1]))
-    assert np.allclose(ellipse(np.pi/2), np.array([10, 3.5]))
-    assert np.allclose(ellipse(np.pi), np.array([4, 2]))
-    assert np.allclose(ellipse(-np.pi/2), np.array([6, -0.5]))
+    vertices = np.stack([np.array([[2, 0], [10, -1], [14, 3], [6, 4]]).T]*2, axis=0)
+    output_center, output_major, output_minor = \
+        elliptical.inscribe_max_area_ellipse_in_parallelogram(vertices)
+    expected_center = np.array([[8, 8], [1.5, 1.5]])
+    expected_major = np.array([[12.46525045, 12.46525045], [2.05815631,  2.05815631]])
+    expected_minor = np.array([[8.24806947,  8.24806947], [-0.48455575, -0.48455575]])
+    assert np.allclose(output_center, expected_center)
+    assert np.allclose(output_major, expected_major)
+    assert np.allclose(output_minor, expected_minor)
 
 
 def test_get_equation_of_max_area_ellipse_in_parallelogram():
