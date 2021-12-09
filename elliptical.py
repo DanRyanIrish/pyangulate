@@ -1,3 +1,4 @@
+import copy
 from functools import partial
 
 import numpy as np
@@ -321,7 +322,7 @@ def get_ellipse_semi_axes_coords(h, k, a, b, c, d):
     phi2 = np.arctan((-R - np.sqrt(R**2 + 4)) / 2)
     # Find the points on the ellipse corresponding to the semi-major and -minor axes.
     ellipse = partial(_parametric_ellipse, h, k, a, b, c, d)
-    xy_axis = -2
+    xy_axis = -1
     xy1 = np.stack(ellipse(phi1), axis=xy_axis)
     xy2 = np.stack(ellipse(phi2), axis=xy_axis)
     # Caculate the semi- axes from the distance between the above points and
@@ -334,10 +335,19 @@ def get_ellipse_semi_axes_coords(h, k, a, b, c, d):
     semi_minor_coord = copy.deepcopy(center)
     major_idx1 = semi_axis1 > semi_axis2
     minor_idx1 = np.logical_not(major_idx1)
-    semi_major_coord[major_idx1] = semi_axis1[major_idx1]
-    semi_minor_coord[major_idx1] = semi_axis2[major_idx1]
-    semi_major_coord[minor_idx1] = semi_axis2[minor_idx1]
-    semi_minor_coord[minor_idx1] = semi_axis1[minor_idx1]
+    semi_major_coord[major_idx1] = xy1[major_idx1]
+    semi_minor_coord[major_idx1] = xy2[major_idx1]
+    semi_major_coord[minor_idx1] = xy2[minor_idx1]
+    semi_minor_coord[minor_idx1] = xy1[minor_idx1]
+    # Convert to row vectors.
+    if semi_major_coord.ndim == 1:
+        semi_major_coord = semi_major_coord.reshape(len(semi_major_coord), 1)
+    else:
+        semi_major_coord = np.swapaxes(semi_major_coord, -1, -2)
+    if semi_minor_coord.ndim == 1:
+        semi_minor_coord = semi_minor_coord.reshape(len(semi_minor_coord), 1)
+    else:
+        semi_minor_coord = np.swapaxes(semi_minor_coord, -1, -2)
 
     return semi_major_coord, semi_minor_coord
 

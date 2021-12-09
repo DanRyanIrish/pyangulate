@@ -34,6 +34,16 @@ def test_get_equation_of_max_area_ellipse_in_parallelogram():
     assert np.allclose(output[5], d)
 
 
+def test_get_ellipse_semi_axes_coords():
+    h, k, = np.array([8., 7.]), np.array([1.5, 0.5])
+    a, b, c, d = np.array([4., 4.]), np.array([2., 2.]), np.array([-0.5, -0.5]), np.array([2., 2.])
+    output_major, output_minor = elliptical.get_ellipse_semi_axes_coords(h, k, a, b, c, d)
+    expected_major = np.array([[12.46525045,  2.05815631], [11.46525045,  1.05815631]]).T
+    expected_minor = np.array([[ 8.24806947, -0.48455575], [ 7.24806947, -1.48455575]]).T
+    assert np.allclose(output_major, expected_major)
+    assert np.allclose(output_minor, expected_minor)
+
+
 def test_compute_isometry_matrix():
     # Define inputs.
     reps = 2
