@@ -21,6 +21,19 @@ def test_inscribe_max_area_ellipse_in_parallelogram():
     assert np.allclose(ellipse(-np.pi/2), np.array([6, -0.5]))
 
 
+def test_get_equation_of_max_area_ellipse_in_parallelogram():
+    vertices = np.stack([np.array([[2, 0], [10, -1], [14, 3], [6, 4]]).T]*2, axis=0)
+    output = elliptical.get_equation_of_max_area_ellipse_in_parallelogram(vertices)
+    h, k = np.array([8., 8.]), np.array([1.5, 1.5])
+    a, b, c, d = np.array([4., 4.]), np.array([2., 2.]), np.array([-0.5, -0.5]), np.array([2., 2.])
+    assert np.allclose(output[0], h)
+    assert np.allclose(output[1], k)
+    assert np.allclose(output[2], a)
+    assert np.allclose(output[3], b)
+    assert np.allclose(output[4], c)
+    assert np.allclose(output[5], d)
+
+
 def test_compute_isometry_matrix():
     # Define inputs.
     reps = 2
