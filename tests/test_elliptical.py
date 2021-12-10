@@ -11,6 +11,28 @@ from sunpy.coordinates import HeliocentricEarthEcliptic, HeliographicStonyhurst
 from tie_pointing import elliptical
 
 
+def test_inscribe_ellipse_para():
+    pass
+
+
+def test_inscribe_ellipse_quad():
+    pass
+
+
+def test_identify_vertices():
+    vertices = np.array([[2, 0], [10, -1], [14, 3], [6, 4]]).T
+    vertices = np.stack((vertices, vertices[:, ::-1]), axis=0)
+    ll, lr, ur, ul = elliptical._identify_vertices(vertices)
+    expected_ll = np.array([[2, 0], [2, 0]])
+    expected_lr = np.array([[10, -1], [10, -1]])
+    expected_ur = np.array([[14, 3], [14, 3]])
+    expected_ul = np.array([[6, 4], [6, 4]])
+    assert (ll == expected_ll).all()
+    assert (lr == expected_lr).all()
+    assert (ur == expected_ur).all()
+    assert (ul == expected_ul).all()
+
+
 def test_inscribe_max_area_ellipse_in_parallelogram():
     vertices = np.stack([np.array([[2, 0], [10, -1], [14, 3], [6, 4]]).T]*2, axis=0)
     output_center, output_major, output_minor = \
@@ -77,3 +99,11 @@ def test_compute_isometry_matrix():
     # Assert results are as expected.
     assert np.allclose(result, expected)
     assert np.allclose(inverse_result, hom_upper_left)
+
+
+def test_inscribe_ellipse_in_quadrilateral():
+    pass
+
+
+def test_compute_isometry():
+    pass

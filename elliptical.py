@@ -6,99 +6,129 @@ import numpy as np
 from tie_pointing import transformations, utils
 
 
-def inscribe_ellipse(col_vertices):
-    # Rotate vertices to x-y plane
-    coord_axis = -2
-    vertex_axis = -1
+def inscribe_ellipse_in_3d(col_vertices):
     # Rotate vertices to xy-plane
     xy_vertices, R1 = transformations.rotate_plane_to_xy(col_vertices)
     R1_inv = np.linalg.inv(R1)
-    # Get indices of vertices that will be in the
-    # lower left, lower right, upper right, upper left positions after transformation.
-    ll_idx, lr_idx, ur_idx, ul_idx, parallelograms_idx, quadrilaterals_idx = identify_vertices(
-        xy_vertices)
-
-    # Define array to hold vertices of the ellipse, i.e. the center and
-    # a point at the end of the semi-major and semi-minor axes.
-    planes_shape = vertices.shape[:-2]
-    ellipse_vertices = np.zeros(tuple(list(planes_shape) + [3, 3]), dtype=float)
-
-    # Calculate ellipse vertices for parallelograms.
-    if parallelograms_idx.any():
-        ellipse_vertices[..., :2, :][parallelograms_idx] = inscribe_ellipse_in_parallelogram(
-            col_vertices[parallelograms_idx], ll_idx, lr_idx, ur_idx, ul_idx)
-
-    # Calculate ellipse vertices for quadrilaterals.
-    if quadrilaterals_idx.any():
-        ellipse_vertices[..., :2, :][quadrilaterals_idx] = inscribe_ellipse_in_quadrilateral(
-            vertices[quadrilaterals_idx], ll_idx, lr_idx, ur_idx, ul_idx)
-
+    ellipse_vertices = inscribe_ellipse(xy_vertices)
     # Convert 2-D ellipse vertices to 3-D coords
     ellipse_vertices = R1_inv @ ellipse_vertices
-
     return ellipse_vertices
 
 
-def identify_vertices(xy_vertices):
-    # Determine which vertices should be lower left, lower right, upper right and upper left
-    # after the the isometry is applied.
-    # vertices must have shape (..., 4, 3), i.e. (..., vertices, coords)
-    coord_axis = -2
+def inscribe_ellipse(xy_vertices):
+    component_axis = -2
     vertex_axis = -1
+    scalar_set = False
+    if xy_vertices.ndim < 2:
+        raise ValueError("vertices must have more than 1 dimensions.")
+    elif xy_vertices.ndim == 2:
+        xy_vertices = np.expand_dims(xy_vertices, 0)
+        scalar_set = True
+    # Determine which sets of vertices correspond to a parallelogram and
+    # which to other quadrilaterals.
+    para_idx = utils.is_parallelogram(xy_vertices, keepdims=True)
+    quad_idx = np.logical_not(para_idx)
+    para_vertices = xy_vertices[para_idx]
+    quad_vertices = xy_vertices[quad_idx]
+    # Define array to hold vertices of the ellipse, i.e. the center and
+    # a point at the end of the semi-major and semi-minor axes.
+    ellipse_vertices = np.zeros(tuple(list(xy_vertices.shape[:-2]) + [3, 3]), dtype=float)
+    # Calculate ellipse vertices for parallelograms.
+    if para_idx.any():
+        ellipse_vertices[para_idx][..., :2, :] = \
+            inscribe_max_area_ellipse_in_parallelogram(para_vertices)
+    # Calculate ellipse vertices for quadrilaterals.
+    if quad_idx.any():
+        ellipse_vertices[quad_idx][..., :2, :] = inscribe_ellipse_in_quadrilateral(quad_vertices)
+    # Remove extra dimension if one was added.
+    if scalar_set:
+        ellipse_vertices = ellipse_vertices[0]
+    return ellipse_vertices
 
+
+def _identify_vertices(xy_vertices):
+    """
+    Given 4 x-y locations, assign them to vertices of a quadrilateral.
+
+    This selection determined which locations will be the lower left, lower right,
+    upper left and upper right vertices after an affine transform is applied.
+
+    Parameters
+    ----------
+    xy_vertices: `numpy.ndarray`
+        The x-y locations representing the vertices. Can have any number of dimensions
+        but the penultimate one must be length 2 and represent the x-y coordinates,
+        while the last one must be length 4 and represent the four vertices of a specific
+        quadrilateral. Other dimensions will represent other quadrilaterls.
+
+    Returns
+    -------
+    ll, lr, ur, ul: `numpy.ndarray`
+        The lower left, lower right, upper right, and upper left vertices
+        if they were to be transformed to the positive quadrant of the coordinate system.
+        These represent columns in the input array and so the vertices dimension
+        is removed compared to the input.
+    """
+    # Put some fixed values into variables.
+    component_axis = -2
+    vertex_axis = -1
+    input_shape = xy_vertices.shape
+    n_xy = input_shape[component_axis]
+    no_vertex_shape = list(input_shape)
+    del no_vertex_shape[vertex_axis]
+    no_vertex_shape = tuple(no_vertex_shape)
+    vertex1_shape = list(input_shape)
+    vertex1_shape[vertex_axis] = 1
+    vertex1_shape = tuple(vertex1_shape)
     # Select lower left vertex (relative to final position after transformation)
     # as the one closest to the origin.
-    norms = np.linalg.norm(xy_vertices, axis=coord_axis)
-    ll_idx = np.isclose(norms - norms.min(axis=vertex_axis, keepdims=True), 0)  #TODO: expand bool idx to coord axis.
+    norms = np.linalg.norm(xy_vertices, axis=component_axis)
+    tmp_vertex_axis = vertex_axis + 1 if component_axis > vertex_axis else vertex_axis
+    ll_idx = np.isclose(norms - norms.min(axis=tmp_vertex_axis, keepdims=True), 0)
+    ll_idx = utils.repeat_over_new_axes(ll_idx, component_axis, n_xy)
+    ll = xy_vertices[ll_idx].reshape(no_vertex_shape)
+    ll_1vertex = ll.reshape(vertex1_shape)
     # Find vertex diagonal to lower left one.
-    diagonal_norm = np.linalg.norm(xy_vertices - xy_vertices[ll_idx], axis=coord_axis)
-    tmp_vertex_axis = vertex_axis + 1 if coord_axis > vertex_axis else vertex_axis
-    ur_idx = np.isclose(diagonal_norm - diagonal_norm.max(axis=tmp_vertex_axis, keepdims=True), 0) #TODO: expand bool idx to coord axis.
+    diagonal_norm = np.linalg.norm(xy_vertices - ll_1vertex, axis=component_axis)
+    ur_idx = np.isclose(diagonal_norm - diagonal_norm.max(axis=tmp_vertex_axis, keepdims=True), 0)
+    ur_idx = utils.repeat_over_new_axes(ur_idx, component_axis, n_xy)
+    ur = xy_vertices[ur_idx].reshape(no_vertex_shape)
     # Get axes of corner vertices relative to lower left.
     # To do this in an array-based way, define v1 as the vertex closer
     # to lower left and v2 as the further from lower left.
-    diagonal_norm_sorted = diagonal_norm.sort(axis=tmp_vertex_axis)
-    v1_idx = np.isclose(diagonal_norm - diagonal_norm_sorted[..., 1], 0) #TODO: expand bool idx to coord axis.
-    v2_idx = np.isclose(diagonal_norm - diagonal_norm_sorted[..., 2], 0) #TODO: expand bool idx to coord axis.
+    diagonal_norm_sorted = np.sort(diagonal_norm, axis=tmp_vertex_axis)
+    v1_idx = np.isclose(diagonal_norm - diagonal_norm_sorted[..., 1:2], 0)
+    v1_idx = utils.repeat_over_new_axes(v1_idx, component_axis, n_xy)
+    v2_idx = np.isclose(diagonal_norm - diagonal_norm_sorted[..., 2:3], 0)
+    v2_idx = utils.repeat_over_new_axes(v2_idx, component_axis, n_xy)
+    v1 = xy_vertices[v1_idx].reshape(no_vertex_shape)
+    v2 = xy_vertices[v2_idx].reshape(no_vertex_shape)
     # Then set the lower right vertex as the one whose line with the lower left
-    # forms a negative with diagonal.
-    diagonal = xy_vertices[ur_idx] - xy_vertices[ll_idx]
-    v1 = xy_vertices[v1_idx] - xy_vertices[ll_idx]
-    v2 = xy_vertices[v2_idx] - xy_vertices[ll_idx]
-    tmp_coord_axis = coord_axis + 1 if coord_axis < vertex_axis else coord_axis
-    x_item = [slice(None)] * ndim(v1)
-    x_item[tmp_coord_axis] = 0
-    y_item = [slice(None)] * ndim(v1)
-    y_item[tmp_coord_axis] = 1
-    v1_theta = np.arctan2(v1[y_item], v1[x_item]) - np.arctan2(diagonal[y_item], diagonal[x_item])
-    lr_idx = np.zeros(xy_vertices.shape, dtype=bool)
-    ul_idx = np.zeros(xy_vertices.shape, dtype=bool)
-    lr_idx[v1_theta < 0] = v1_theta[v1_theta < 0]
-    lr_idx[v1_theta > 0] = v2_theta[v1_theta > 0]
-    ul_idx[v1_theta > 0] = v1_theta[v1_theta > 0]
-    ul_idx[v1_theta < 0] = v2_theta[v1_theta < 0]
-    # Now determine which pairs of lines are parallel, if any.
-    # Let m0 be the slope of the line from lower left to lower right,
-    # m1 the slope from lower right to upper right,
-    # m2 the slope from upper right to upper left
-    # and m3 the sloper from upper left to lower left.
-    ll = xy_vertices[ll_idx]
-    lr = xy_vertices[lr_idx]
-    ur = xy_vertices[ur_idx]
-    ul = xy_vertices[ul_idx]
-    m0 = (lr[y_item] - ll[y_item]) / (lr[x_item] - ll[x_item])
-    m1 = (ur[y_item] - lr[y_item]) / (ur[x_item] - lr[x_item])
-    m2 = (ul[y_item] - ur[y_item]) / (ul[x_item] - ur[x_item])
-    m3 = (ll[y_item] - ul[y_item]) / (ll[x_item] - ul[x_item])
-    # Find cases where quadrilateral has two parallel sides and slopes m1 and m3 are parallel.
-    # In these cases, the lower left point must be changed to one adjacent to it.
-    # Otherwise algorithm for such quadrilaterals will not work.
-    vertical_parallels = np.isclose(m1, m3)
-    n_parallel_pairs = vertical_parallels + np.isclose(m0, m2)
-    wrong_ll_idx = np.logical_and(n_parallel_pairs == 1, vertical_parallels)
-    if wrong_ll_idx.any():
-        ll_idx[wrong_ll_idx], lr_idx[wrong_ll_idx], ur_idx[wrong_ll_idx], ll_idx[wrong_ll_idx] = \
-            lr_idx[wrong_ll_idx], ur_idx[wrong_ll_idx], ul_idx[wrong_ll_idx], ll_idx[wrong_ll_idx]
+    # forms a positive angle with diagonal. The remaining vertex is the upper left one.
+    v1_shifted = v1 - ll
+    v2_shifted = v2 - ll
+    diagonal_shifted = ur - ll
+    tmp_component_axis = component_axis + 1 if component_axis < vertex_axis else component_axis
+    x_item = [slice(None)] * v1.ndim
+    x_item[tmp_component_axis] = 0
+    x_item = tuple(x_item)
+    y_item = [slice(None)] * v1.ndim
+    y_item[tmp_component_axis] = 1
+    y_item = tuple(y_item)
+    theta = (np.arctan2(v1_shifted[y_item], v1_shifted[x_item])
+             - np.arctan2(diagonal_shifted[y_item], diagonal_shifted[x_item]))
+    theta = utils.repeat_over_new_axes(theta, tmp_component_axis, n_xy)
+    pos_theta_idx = theta < 0
+    neg_theta_idx = theta > 0
+    lr = np.zeros(no_vertex_shape)
+    ul = np.zeros(no_vertex_shape)
+    lr[pos_theta_idx] = v1[pos_theta_idx]
+    lr[neg_theta_idx] = v2[neg_theta_idx]
+    ul[neg_theta_idx] = v1[neg_theta_idx]
+    ul[pos_theta_idx] = v2[pos_theta_idx]
+    return ll, lr, ur, ul
+
 
     # Compute ellipse points for parallograms and other quadrilaterals separately.
     parallelograms_idx = n_parallel_pairs == 2
@@ -374,7 +404,6 @@ def get_ellipse_semi_axes_coords(h, k, a, b, c, d):
         semi_minor_coord = semi_minor_coord.reshape(len(semi_minor_coord), 1)
     else:
         semi_minor_coord = np.swapaxes(semi_minor_coord, -1, -2)
-
     return semi_major_coord, semi_minor_coord
 
 
@@ -384,7 +413,33 @@ def _parametric_ellipse(h, k, a, b, c, d, phi):
     return x, y
 
 
-def inscribe_ellipse_in_quadrilateral(vertices):
+def inscribe_ellipse_in_quadrilateral(xy_vertices):
+    # Select which vertices will be lower left, lower right, upper left, and upper right
+    # for the purposes of the transformations.
+    ll, lr, ur, lr = _identify_vertices(xy_vertices)
+    # In the case of quadrilaterals that have 2 parallel sides, the lower left vertex
+    # must not be at the base of one of those parallel sides.
+    # If this is the case, shift vertices one step around the quadrilateral.
+    # Let m0 be the slope of the line from lower left to lower right,
+    # m1 the slope from lower right to upper right,
+    # m2 the slope from upper right to upper left
+    # and m3 the sloper from upper left to lower left.
+    # ind cases where slopes m1 and m3 are parallel.
+    m0, m1, m2, m3 = utils.get_quadrilateral_slopes(ll, lr, ur, ul)
+    wrong_ll_idx = np.isclose(m1, m3)
+    # Before proceding, confirm the other lines are not also parallel.
+    # This would mean that the vertices represent a parallelogram and this
+    # algorithm is not valid.
+    is_parallelogram = np.isclose(m0, m2) + wrong_ll_idx
+    if is_parallelogram.any():
+        raise ValueError(
+            "Some input vertices represent a parallelogram, for which this function is not valid.")
+    if wrong_ll_idx.any():
+        ll_idx[wrong_ll_idx], lr_idx[wrong_ll_idx], ur_idx[wrong_ll_idx], ll_idx[wrong_ll_idx] = \
+            lr_idx[wrong_ll_idx], ur_idx[wrong_ll_idx], ul_idx[wrong_ll_idx], ll_idx[wrong_ll_idx]
+
+
+def inscribe_ellipse_in_quadrilateral_old(vertices):
     # Apply isometry to vertices, converting them to a 2-D coordinate system whereby:
     # lower left: (0, 0)
     # lower right: (A, B)

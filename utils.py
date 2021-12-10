@@ -6,6 +6,78 @@ from astropy.coordinates import SkyCoord
 from sunpy.coordinates import HeliocentricEarthEcliptic
 
 
+def get_quadrilateral_slopes(ll, lr, ur, ul):
+    """Get the slopes of the lines of a quadrilateral given its vertices.
+
+    Parameters
+    ----------
+    ll, lr, ur, ul: `numpy.ndarray`
+        The x-ray coordinates of the lower left, lower right, upper right and
+        upper left vertices, respectively.
+        Must all have same shape and the last axis must represent the x-y components.
+        with the 0th entry being the x component and the 1st entry being the y component.
+        Other axes will be assumed to represent other quadrilaterals.
+
+    Returns
+    -------
+    m_ll_lr, m_lr_ur, m_ur_lr, m_ul_ll: `numpy.ndarray` or `float`
+        The slopes of the lines of the quadrilateral.
+        m_ll_lr is the slope of the line connecting the lower left (ll) and
+        lower right (lr) vertices. Other slopes adhere to same naming convention.
+    """
+    # Confirm inputs are ordered correctly.
+    vertices = np.stack([ll, lr, ur, ul], axis=-1)
+    norms = np.linalg.norm(vertices - ll, axis=-2)
+    if (norms[..., 2] != norms.max(axis=-1)).any():
+        raise ValueError("vertices not entered in valid order.")
+    m_ll_lr = (lr[..., 1] - ll[..., 1]) / (lr[..., 0] - ll[..., 0])
+    m_lr_ur = (ur[..., 1] - lr[..., 1]) / (ur[..., 0] - lr[..., 0])
+    m_ur_ul = (ul[..., 1] - ur[..., 1]) / (ul[..., 0] - ur[..., 0])
+    m_ul_ll = (ll[..., 1] - ul[..., 1]) / (ll[..., 0] - ul[..., 0])
+    return m_ll_lr, m_lr_ur, m_ur_ul, m_ul_ll
+
+
+def is_parallelogram(vertices, keepdims=True):
+    """Returns True is set of vertices represent a parallelogram."""
+    ll = vertices[..., 0:1]
+    other_vertices = vertices[..., 1:]
+    norms = np.linalg.norm(vertices - ll, axis=-2)
+    diagonal_idx = norms == norms.max(axis=-1)
+    ur = other_vertices[diagonal_idx]
+    other_vertices = other_vertices[np.logical_not(diagonal_idx)]
+    lr = other_vertices[..., 0]
+    ul = other_vertices[..., 1]
+    ll = ll[0]
+    m_ll_lr, m_lr_ur, m_ur_ul, m_ul_ll = get_quadrilateral_slopes(ll, lr, ur, ul)
+    para_idx = logical_and(np.isclose(m_ll_lr, m_ur_ul), np.isclose(m_lr_ur, m_ul_ll))
+    if keepdims:
+        shape = tuple([1] * vertices.shape[:-2] + list(vertices.shape[-2:]))
+        para_idx = np.tile(para_idx[..., np.newaxis, np.newaxis], shape)
+    return para_idx
+
+
+def repeat_over_new_axes(arr, axes, repeats):
+    if np.isscalar(axes):
+        axes = np.array([axes])
+    if np.isscalar(repeats):
+        repeats = np.array([repeats])
+    if len(axes) != len(repeats):
+        raise ValueError("axes and repeats must be same length.")
+    axes = np.asarray(axes)
+    repeats = np.asarray(repeats)
+    axes[axes < 0] += arr.ndim + 1
+    sort_idx = np.argsort(axes)
+    axes = axes[sort_idx]
+    repeats = repeats[sort_idx]
+    axes = axes + np.arange(arr.ndim)
+    item = [slice(None)] * arr.ndim
+    tile_shape = [1] * arr.ndim
+    for axis, repeat in zip(axes, repeats):
+       item.insert(axis, np.newaxis)
+       tile_shape.insert(axis, repeat)
+    return np.tile(arr[tuple(item)], tuple(tile_shape))
+
+
 def convert_to_homogeneous_coords(coords, component_axis=-1,
                                   trailing_convention=False, vector=False):
     """Convert N-D coordinate(s) to homogeneous coordinates.
