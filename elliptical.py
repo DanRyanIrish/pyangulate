@@ -513,13 +513,11 @@ def inscribe_ellipse_in_quadrilateral_old(vertices):
     return h, k, a, b, iso_vertices, A, B, C, s, t, r1, r2, R, W
 
 
-def compute_isometry_matrices(new_origin, new_y, plane_normal):
+def compute_isometry_matrices(new_origin, new_y, trailing_convention=False):
     """
     Calculate the affine transformation matrix that does the following:
     1. translates by -new_origin (i.e. the origin is moved to new_origin);
-    2. rotates such that the plane on which the point lies becomes parallel to the z-axis;
-    3. rotates the line from the new_origin to new_y around the new z-axis so
-    to is aligned with the y-axis.
+    2. rotates the line from the new_origin to new_y so it is aligned with the y-axis.
 
     Also calculate the inverse affine transform.
 
@@ -528,15 +526,15 @@ def compute_isometry_matrices(new_origin, new_y, plane_normal):
     new_origin: `numpy.ndarray`
         The point which serves as the new origin, i.e. the matrix translates
         by subtracting this point.
-        The last dimension must be length 3 and represent the coordinate components.
+        The last dimension must be length 2 and represent the coordinate's x-y components.
         Other dimensions are assumed to represent other transformations and are
         broadcast through the calculation.
     new_y: `numpy.ndarray`
         The point which, along with new_origin, defines the new y-axis.
         Must be same shape as new_origin and dimensions are interpretted in the same way.
-    plane_normal: `numpy.ndarray`
-        A vector normal to the plane in which new_origin and new_y lie.
-        Must be same shape as new_origin and dimensions are interpretted in the same way.
+    trailing_convention: `bool`
+        Determines whether the non-physical dimension in the affine transformation will be
+        the first or last dimension.
 
     Returns
     -------
@@ -545,7 +543,7 @@ def compute_isometry_matrices(new_origin, new_y, plane_normal):
         Will have N+1 dimensions where N is the number of dimensions in the input.
         Dimensions 0,..,N-1 will have the same shape has the corresponding dimensions
         in the inputs.
-        The final two dimensions will represent 4x4 matrices, i.e. affine transformations.
+        The final two dimensions will represent 3x3 matrices, i.e. affine transformations.
         See Notes for more.
 
     inverse_isometry: `numpy.ndarray`
@@ -556,16 +554,17 @@ def compute_isometry_matrices(new_origin, new_y, plane_normal):
     -----
     Affine transformations combine linear transformations such as
     rotation, reflection, shearing etc., with translations which cannot be achieved
-    via NxN (3x3) matrix multiplication. They do this by adding a N+1th (4th) row and
-    column where the final column represents the translation, the final row is all 0,
-    and the last element in the final row/column is 1.
-    N-D points are then made compatible with these transformation by appending a 1
-    for their N+1th (4th) dimensions, while vectors have a 0 appended.
-    This is known as "homogeneous coordinates" where the real coordinates are simply
-    the first N elements in the homogeneous coordinate.
-    This way of representing translation is the same as shearing (a linear transformation)
-    in a N+1th dimensions and then projecting the new position onto the N-D plane,
-    i.e. the value to the N+1th coordinate is 0.
+    via NxN (2x2) matrix multiplication. They do this by adding a N+1th (3rd) row and
+    column where the extra column represents the translation, and the extra row is all 0
+    except its value corresponding to the extra column, which is 1.
+    There are two conventions: either the extra row and column can be placed as the 1st
+    row/column or the last row/column. N-D points are then made compatible with these
+    transformation by adding a 1 at the start/end of the coordinate depending on
+    the leading or trailing convention is used for the affine tranaformation.
+    Coordinates with this extra theoretical dimension are known as
+    "homogeneous coordinates". This way of representing translation is the same as
+    shearing (a linear transformation) in a N+1th dimensions and then projecting the new
+    position onto the N-D plane, i.e. the value to the N+1th coordinate is 0.
 
     References
     ----------
@@ -575,91 +574,51 @@ def compute_isometry_matrices(new_origin, new_y, plane_normal):
     """
     # Sanitize inputs
     input_shape = new_origin.shape
-    if ((new_y.shape != plane_normal.shape != input_shape) or
-            (new_origin.shape[-1] != new_y.shape[-1] != plane_normal.shape[-1] != 3)):
-        raise ValueError("All inputs must have same shape and final axes must be length 3. "
+    if ((new_y.shape != input_shape) or (new_origin.shape[-1] != new_y.shape[-1] != 2)):
+        raise ValueError("All inputs must have same shape and final axes must be length 2. "
                          f"new_origin: {new_origin.shape}. "
-                         f"new_y: {new_y.shape}. "
-                         f"plane_normal: {plane_normal.shape}.")
-    # Compute the unit vectors, u, v, w, of the orthogonal coordinate system where
-    # the origin is at new_origin,
-    # the w-axis is normal to the plane,
-    # the v-axis is along the open new_origin-new_y line with the positive direction
-    # going from new_origin to new_y,
-    # and the u-axis is the cross-product of the v- and w-axes.
-    plane_normal_norm = np.linalg.norm(plane_normal, axis=-1)
-    w = plane_normal / np.expand_dims(np.linalg.norm(plane_normal, axis=-1), -1)  # Normalize length
-    v = new_y - new_origin
-    v /= np.expand_dims(np.linalg.norm(v, axis=-1), -1)
-    u = np.cross(v, w) # j x k = i; k x j = -i
+                         f"new_y: {new_y.shape}. ")
+    if trailing_convention:
+        hom_idx = -1
+        mat_slice = slice(0, 2)
+    else:
+        hom_idx = 0
+        mat_slice = slice(1, 3)
+    tiled_identity = np.eye(3)
+    if len(input_shape) > 1:
+        tiled_identity = utils.repeat_over_new_axes(
+            tiled_identity, [0]*(len(input_shape)-1), input_shape[:-1])
+    # Calculate matrix that shifts origin to new_origin.
+    T = copy.deepcopy(tiled_identity)
+    T[..., hom_idx] = utils.convert_to_homogeneous_coords(
+        -new_origin, trailing_convention=trailing_convention)
+    T_inv = copy.deepcopy(tiled_identity)
+    T_inv[..., hom_idx] = utils.convert_to_homogeneous_coords(
+        new_origin, trailing_convention=trailing_convention)
 
-    # Translation matrix translates so that lower left become the origin.
-    # Create a 4x4 matrix as required for 3-D affine transformation matrices and broadcast
-    # to the other dimensions of the input.
-    matrix_shape = list(input_shape[:-1]) + [4, 4]
-    tiled_affine_identity_matrix = np.broadcast_to(np.identity(4), matrix_shape)
-    T = copy.deepcopy(tiled_affine_identity_matrix)
-    # Set translation (4th) column to subtract new origin, leaving 4th element as 1.
-    T[...,:3, 3] = -new_origin
+    # Calculate rotation matrix that brings line from new_origin to new_y in line with y_axis.
+    shifted_y = new_y - new_origin
+    theta = -np.arctan(shifted_y[..., 1] / shifted_y[..., 0]) + np.pi/2
+    if not np.isscalar(theta):
+        theta[shifted_y[..., 0] < 0] += np.pi
+    elif shifted_y[0] < 0:
+        theta += np.pi
+    r = np.array([[np.cos(theta), -np.sin(theta)],
+                  [np.sin(theta), np.cos(theta)]])
+    r_inv = np.array([[np.cos(theta), np.sin(theta)],
+                      [-np.sin(theta), np.cos(theta)]])
+    if r.ndim > 2:
+        # If R has more that 2 dimensions, move its 2 matrix dimensions to last 2 axes.
+        r = np.moveaxis(r, 0, -1)
+        r = np.moveaxis(r, 0, -1)
+        r_inv = np.moveaxis(r_inv, 0, -1)
+        r_inv = np.moveaxis(r_inv, 0, -1)
+    R = copy.deepcopy(tiled_identity)
+    R[..., mat_slice, mat_slice] = r
+    R_inv = copy.deepcopy(tiled_identity)
+    R_inv[..., mat_slice, mat_slice] = r_inv
 
-    # First rotation is to rotate the plane so its normal is parallel to the z-axis.
-    # The rotation matrix is defined by the row vectors of the unit vectors, u, v, w.
-    # Enter these into athe top left 3x3 sub-matrix of a 4x4 affine transformation matrix.
-    # As rotation is a purely linear transformation, the last row and column are the same
-    # as the identity matrix.
-    R1 = copy.deepcopy(tiled_affine_identity_matrix)
-    R1[..., :-1, :-1] = np.stack((u, v, w), axis=-2)
-
-    # Second rotation is to rotate around the rotated plane normal (now the z-axis)
-    # so the new_origin -> new_y line aligns with the y-axis.
-    # To calculate the angle between this line and the y-axis,
-    # apply the translation and R1 rotation, and then use arctan on the resulting
-    # intermediate (x,y)/(u,v) coordinates.
-    # Start by converting the new_y coord to homogeneous coords, i.e. an append
-    # a 4th point to final axis whose value is 1.  See Notes in docstring.
-    hom_new_y = convert_to_homogeneous_coords(new_y)
-    # Re-represent last axis as a 4x1 matrix rather than a length-4 homogeneous location coord.
-    hom_new_y = np.expand_dims(hom_new_y, -1)
-    partial_isometry = R1 @ T
-    tmp_y = (partial_isometry @ hom_new_y)[...,0]  # Remove trailing dummy axis.
-    theta = np.arctan(tmp_y[..., 0] / tmp_y[..., 1])  # Angle to y-axis
-    # Create affine transformation of a rotation by theta in the xy (uv) plane
-    # so the new_origin -> new_y line aligns with the y-axis.
-    rot_shape = np.array(matrix_shape)
-    rot_shape[-2:] = 2
-    rot = np.zeros(tuple(rot_shape))
-    rot[..., 0, 0] = np.cos(theta)
-    rot[..., 0, 1] = -np.sin(theta)
-    rot[..., 1, 0] = np.sin(theta)
-    rot[..., 1, 1] = np.cos(theta)
-    R2 = copy.deepcopy(tiled_affine_identity_matrix)
-    R2[..., :2, :2] = rot
-
-    # Final isometery is given by the matrix product, R2.R1.T
-    isometry = R2 @ partial_isometry
-
-    # Also compute inverse isometry.
-    # R2^-1 is simply a rotation around the z-axis by -theta.
-    rot_inv = np.zeros(tuple(rot_shape))
-    rot_inv[..., 0, 0] = np.cos(-theta)
-    rot_inv[..., 0, 1] = -np.sin(-theta)
-    rot_inv[..., 1, 0] = np.sin(-theta)
-    rot_inv[..., 1, 1] = np.cos(-theta)
-    R2_inv = copy.deepcopy(tiled_affine_identity_matrix)
-    R2_inv[..., :2, :2] = rot_inv
-
-    # Whereas R1 was given by the row vectors of the u, v, w unit vectors.
-    # inverse of R1 is given by the column vectors of u, v, w.
-    R1_inv = copy.deepcopy(tiled_affine_identity_matrix)
-    R1_inv[..., :-1, :-1] = np.stack((u, v, w), axis=-1)
-
-    # The inverse translation is simply a positive translation by new_origin
-    # rather that a negative translation.
-    T_inv = copy.deepcopy(tiled_affine_identity_matrix)
-    T_inv[...,:3, 3] = new_origin
-
-    # Final inverse isometry in the matrix produc of the components in reverse
-    # order to the forward transformation: T^-1 . R1^-1 . R2^-1
-    inverse_isometry = T_inv @ R1_inv @ R2_inv
-
-    return isometry, inverse_isometry
+    # Combine translation and rotation into affine transform.
+    A = R @ T
+    A_inv = T_inv @ R_inv
+    return A, A_inv
