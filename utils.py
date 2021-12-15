@@ -27,7 +27,7 @@ def get_quadrilateral_slopes(ll, lr, ur, ul):
     """
     # Confirm inputs are ordered correctly.
     vertices = np.stack([ll, lr, ur, ul], axis=-1)
-    norms = np.linalg.norm(vertices - ll, axis=-2)
+    norms = np.linalg.norm(vertices - np.expand_dims(ll, -1), axis=-2)
     if (norms[..., 2] != norms.max(axis=-1)).any():
         raise ValueError("vertices not entered in valid order.")
     m_ll_lr = (lr[..., 1] - ll[..., 1]) / (lr[..., 0] - ll[..., 0])
@@ -41,17 +41,19 @@ def is_parallelogram(vertices, keepdims=True):
     """Returns True is set of vertices represent a parallelogram."""
     ll = vertices[..., 0:1]
     other_vertices = vertices[..., 1:]
-    norms = np.linalg.norm(vertices - ll, axis=-2)
-    diagonal_idx = norms == norms.max(axis=-1)
-    ur = other_vertices[diagonal_idx]
-    other_vertices = other_vertices[np.logical_not(diagonal_idx)]
+    norms = np.linalg.norm(other_vertices - ll, axis=-2, keepdims=True)
+    diagonal_idx = np.where(norms == norms.max(axis=-1))
+    ur = other_vertices[diagonal_idx].reshape(other_vertices.shape[:-1])
+    non_diagonal_idx = np.where(norms != norms.max(axis=-1))
+    other_vertices = other_vertices[non_diagonal_idx].reshape(
+        tuple(list(other_vertices.shape[:-1]) + [2]))
     lr = other_vertices[..., 0]
     ul = other_vertices[..., 1]
-    ll = ll[0]
+    ll = ll[..., 0]
     m_ll_lr, m_lr_ur, m_ur_ul, m_ul_ll = get_quadrilateral_slopes(ll, lr, ur, ul)
-    para_idx = logical_and(np.isclose(m_ll_lr, m_ur_ul), np.isclose(m_lr_ur, m_ul_ll))
+    para_idx = np.logical_and(np.isclose(m_ll_lr, m_ur_ul), np.isclose(m_lr_ur, m_ul_ll))
     if keepdims:
-        shape = tuple([1] * vertices.shape[:-2] + list(vertices.shape[-2:]))
+        shape = tuple([1] * len(vertices.shape[:-2]) + list(vertices.shape[-2:]))
         para_idx = np.tile(para_idx[..., np.newaxis, np.newaxis], shape)
     return para_idx
 
