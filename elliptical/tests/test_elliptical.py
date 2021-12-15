@@ -25,8 +25,8 @@ def test_inscribe_ellipse_in_3d_para():
     output_vertices = elliptical.inscribe_ellipse_in_3d(input_vertices)
     assert np.allclose(output_vertices, expected_vertices)
     # Test when input vertices are 2-D
-    #output_vertices0 = elliptical.inscribe_ellipse_in_3d(input_vertices[0])
-    #assert np.allclose(output_vertices0, expected_vertices[0])
+    output_vertices0 = elliptical.inscribe_ellipse_in_3d(input_vertices[0])
+    assert np.allclose(output_vertices0, expected_vertices[0])
 
 
 def test_inscribe_ellipse_para():

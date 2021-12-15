@@ -41,10 +41,12 @@ def is_parallelogram(vertices, keepdims=True):
     """Returns True is set of vertices represent a parallelogram."""
     ll = vertices[..., 0:1]
     other_vertices = vertices[..., 1:]
-    norms = np.linalg.norm(other_vertices - ll, axis=-2, keepdims=True)
-    diagonal_idx = np.where(norms == norms.max(axis=-1))
+    norms = np.linalg.norm(other_vertices - ll, axis=-2)
+    norms_max = repeat_over_new_axes(norms.max(axis=-1), -1, norms.shape[-1])
+    diagonal_idx = norms == norms_max
+    diagonal_idx = repeat_over_new_axes(diagonal_idx, -2, other_vertices.shape[-2])
     ur = other_vertices[diagonal_idx].reshape(other_vertices.shape[:-1])
-    non_diagonal_idx = np.where(norms != norms.max(axis=-1))
+    non_diagonal_idx = np.logical_not(diagonal_idx)
     other_vertices = other_vertices[non_diagonal_idx].reshape(
         tuple(list(other_vertices.shape[:-1]) + [2]))
     lr = other_vertices[..., 0]
