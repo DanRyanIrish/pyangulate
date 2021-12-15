@@ -394,5 +394,3 @@ def _derive_ellipse_axes(A, B, C, s, t, h):
     a = np.sqrt(0.5 * (np.sqrt(R**2 + 4*W) + R))
     b = np.sqrt(0.5 * (np.sqrt(R**2 + 4*W) - R))
     return k, a, b
-
-

@@ -13,18 +13,20 @@ from tie_pointing.elliptical import elliptical
 
 
 def test_inscribe_ellipse_in_3d_para():
-    vertices = np.stack([np.array([[2, 0, 0], [10, -1, 0], [14, 3, 0], [6, 4, 0]]).T]*2, axis=0)
-    R = transformations.derive_plane_rotation_matrix(np.array([0, 0, 1]), np.array([0, 0.5, 1]))
-    vertices = R @ vertices
-    output_vertices = elliptical.inscribe_ellipse_in_3d(vertices)
-    expected_center = np.array([[8, 8], [1.5, 1.5]])
-    expected_major = np.array([[12.46525045, 12.46525045], [2.05815631,  2.05815631]])
-    expected_minor = np.array([[8.24806947,  8.24806947], [-0.48455575, -0.48455575]])
-    expected_vertices = np.stack((expected_center, expected_major, expected_minor), axis=-1)
-    return output_vertices, expected_vertices
-    assert np.allclose(output_center, expected_center)
-    assert np.allclose(output_major, expected_major)
-    assert np.allclose(output_minor, expected_minor)
+    input_vertices = np.array([[2, 10, 14, 6],
+                               [0, -0.89442719, 2.68328157, 3.57770876],
+                               [0, 0.4472136, -1.34164079, -1.78885438]])
+    input_vertices = np.stack([input_vertices]*2, axis=0)
+    expected_vertices = np.array([[8, 12.46525045, 7.75193053],
+                                  [1.34164078, 1.84087096, 3.11668141],
+                                  [-0.6708204, -0.92043549, -1.55834072]])
+    expected_vertices = np.stack([expected_vertices]*2, axis=0)
+    # Test when input vertices > 2D
+    output_vertices = elliptical.inscribe_ellipse_in_3d(input_vertices)
+    assert np.allclose(output_vertices, expected_vertices)
+    # Test when input vertices are 2-D
+    #output_vertices0 = elliptical.inscribe_ellipse_in_3d(input_vertices[0])
+    #assert np.allclose(output_vertices0, expected_vertices[0])
 
 
 def test_inscribe_ellipse_para():
@@ -39,8 +41,7 @@ def test_inscribe_ellipse_para():
 
 def test_inscribe_ellipse_quad():
     vertices = np.stack([np.array([[2, 0], [10, -1], [16, 7], [6, 4]]).T]*2, axis=0)
-    output_center, output_major, output_minor = \
-        elliptical.inscribe_ellipse(vertices)
+    output_center, output_major, output_minor = elliptical.inscribe_ellipse(vertices)
     expected_center = np.array([[3.24945734, 2.40058265], [3.24945734, 2.40058265]])
     expected_major = np.array([[5.77585523, 5.98216733], [5.77585523, 5.98216733]])
     expected_minor = np.array([[1.20586074, 3.84210605], [1.20586074, 3.84210605]])
