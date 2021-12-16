@@ -3,40 +3,7 @@ from functools import partial
 
 import numpy as np
 
-from tie_pointing import transformations, utils
-
-
-def inscribe_max_area_ellipse_in_parallelogram(vertices):
-    """Derive the maximum-area ellipse inscribed in a parallelogram.
-
-    The ellipse is represented in the returned values as the coordinates of
-    the ellipse center, a point at one end of the major-axis and minor-axis.
-
-    Parameters
-    ----------
-    vertices: `numpy.ndarray`
-        ...,2x4 array giving the 2-D x-y coordinates of the 4 vertices of the parallelogram.
-        The penultimate axis gives the coordinates of a single vertex while
-        the last axis iterates from vertex to vertex.
-        Other axes and take any shape and can be used to represent other ellipses.
-
-    Returns
-    -------
-    center: `numpy.ndarray`
-        The x-y coordinates of the center of the ellipse.
-        Has same shape as vertices with axes having the same meaning.
-    major_coord: `numpy.ndarray`
-        The x-y coordinates of the point at one end of the major-axis.
-        Has same shape as vertices with axes having the same meaning.
-    minor_coord: `numpy.ndarray`
-        The x-y coordinates of the point at one end of the minor-axis.
-        Has same shape as vertices with axes having the same meaning.
-    """
-    component_axis = -2
-    h, k, a, b, c, d = get_equation_of_max_area_ellipse_in_parallelogram(vertices)
-    major_coord, minor_coord = get_ellipse_semi_axes_coords(h, k, a, b, c, d)
-    center = np.stack((h, k), axis=component_axis)
-    return center, major_coord, minor_coord
+from tie_pointing import transforms, utils
 
 
 def get_equation_of_max_area_ellipse_in_parallelogram(vertices):
@@ -146,7 +113,7 @@ def get_equation_of_max_area_ellipse_in_parallelogram(vertices):
         trailing_convention=trailing_convention, vector=False)
 
     # Calculate projective collineation
-    T = transformations.derive_projective_collineation_from_five_points(
+    T = transforms.derive_projective_collineation_from_five_points(
             vertices, square_vertices, center, square_center)
     T_inv = np.linalg.inv(T)
     # Extract equation coefficients.
@@ -264,15 +231,6 @@ def get_ellipse_semi_axes_coords(h, k, a, b, c, d):
     semi_minor_coord[major_idx1] = xy2[major_idx1]
     semi_major_coord[minor_idx1] = xy2[minor_idx1]
     semi_minor_coord[minor_idx1] = xy1[minor_idx1]
-    # Convert to row vectors.
-    if semi_major_coord.ndim == 1:
-        semi_major_coord = semi_major_coord.reshape(len(semi_major_coord), 1)
-    else:
-        semi_major_coord = np.swapaxes(semi_major_coord, -1, -2)
-    if semi_minor_coord.ndim == 1:
-        semi_minor_coord = semi_minor_coord.reshape(len(semi_minor_coord), 1)
-    else:
-        semi_minor_coord = np.swapaxes(semi_minor_coord, -1, -2)
     return semi_major_coord, semi_minor_coord
 
 
@@ -280,4 +238,3 @@ def _parametric_ellipse(h, k, a, b, c, d, phi):
     x = h + a * np.cos(phi) + b * np.sin(phi)
     y = k + c * np.cos(phi) + d * np.sin(phi)
     return x, y
-

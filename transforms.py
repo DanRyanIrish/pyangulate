@@ -72,22 +72,6 @@ def _derive_unit_normal(points, component_axis, coord_axis):
     return plane_normal
 
 
-def _derive_plane_normal(points, component_axis, coord_axis):
-    # Derive unit vector normal to the plane in which the first two points lie.
-    i = 0
-    cross_points = []
-    while i < points.shape[coord_axis] and len(cross_points) < 2:
-        point = points[..., i:i+1]
-        if not np.any(np.all(point == 0, axis=component_axis)):
-            cross_points.append(point)
-        i += 1
-    if len(cross_points) < 2:
-        raise ValueError("Could not find 2 sets of vertices not including the origin.")
-    plane_normal = np.cross(*cross_points, axis=component_axis)
-    plane_normal = plane_normal / np.linalg.norm(plane_normal, axis=component_axis, keepdims=True)
-    return plane_normal
-
-
 def derive_plane_rotation_matrix(plane_normal, new_plane_normal):
     """Derive matrix that rotates one plane to another.
 
@@ -134,7 +118,10 @@ def derive_plane_rotation_matrix(plane_normal, new_plane_normal):
            / (old_norm * new_norm))
     # If cos = 1, then old plane and new plane are parallel. Return identity matrix.
     if (np.isscalar(cos) and cos == 1) or (cos == 1).all():
-        return np.repeat(np.eye(3), shape=list(cos.shape) + [3, 3])
+        R = np.eye(3)
+        if cos.ndim > 2:
+            R = utils.repeat_over_new_axes(R, np.zeros(cos.ndim-2), cos.shape[:-2])
+        return R
     sin = np.sqrt(1 - cos**2)
     C = 1 - cos
     rot_axis = np.cross(plane_normal, new_plane_normal, axis=component_axis)
@@ -240,3 +227,12 @@ def derive_projective_collineation_from_five_points(points, images, point5, imag
     # parallelogram vertices to 2-unit square vertices.  See Notes in docstring.
     return A2 @ A1_inv
 
+
+def rotation_matrix_2d(theta):
+    """Return 2-D rotation matrix given angle in radians."""
+    matrix = np.array([[np.cos(theta), -np.sin(theta)],
+                       [np.sin(theta), np.cos(theta)]])
+    if not np.isscalar(theta):
+        matrix = np.moveaxis(matrix, 0, -1)
+        matrix = np.moveaxis(matrix, 0, -1)  # Repeat is deliberate.
+    return matrix

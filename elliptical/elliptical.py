@@ -1,9 +1,10 @@
 import copy
+import warnings
 from functools import partial
 
 import numpy as np
 
-from tie_pointing import transformations, utils
+from tie_pointing import transforms, utils
 from tie_pointing.elliptical import parallelogram, quadrilateral
 
 
@@ -29,7 +30,7 @@ def inscribe_ellipse_in_3d(vertices):
     """
     # Rotate vertices to xy-plane
     component_axis = -2
-    xy_vertices, A = transformations.transform_to_xy_plane(vertices)
+    xy_vertices, A = transforms.transform_to_xy_plane(vertices)
     A_inv = np.linalg.inv(A)
     # Strip z-axis (which should all now be zeros) and homogeneous axis.
     z_item = utils._item(xy_vertices.ndim, component_axis, -1)
@@ -42,7 +43,7 @@ def inscribe_ellipse_in_3d(vertices):
     # Get ellipse vertices in 2D.
     ellipse_xy_vertices = inscribe_ellipse(xy_vertices)
     # Convert 2-D ellipse vertices to 3-D coords and transform back to original plane.
-    ellipse_z0_vertices = add_z_to_xy(ellipse_xy_vertices, component_axis)
+    ellipse_z0_vertices = utils.add_z_to_xy(ellipse_xy_vertices, component_axis)
     ellipse_hom_vertices = utils.convert_to_homogeneous_coords(
         ellipse_z0_vertices, component_axis=component_axis)
     ellipse_vertices = A_inv @ ellipse_hom_vertices
@@ -107,7 +108,6 @@ def _calculate_and_reshape_ellipse_vertices(idx, xy_vertices, func):
     shape = (int(idx.sum() / 2 / 4), 2, 4)
     vertices = xy_vertices[idx].reshape(shape)
     ellipse = func(vertices)
-    ellipse = tuple(np.swapaxes(coord, -1, -2) for coord in ellipse)
     ellipse = np.stack(ellipse, axis=-1)
     return ellipse.flatten()
 
@@ -226,7 +226,8 @@ def inscribe_max_area_ellipse_in_parallelogram(xy_vertices):
     xy_vertices = np.stack(_identify_vertices(xy_vertices), axis=coord_axis)
     h, k, a, b, c, d = parallelogram.get_equation_of_max_area_ellipse_in_parallelogram(xy_vertices)
     major_coord, minor_coord = parallelogram.get_ellipse_semi_axes_coords(h, k, a, b, c, d)
-    center = np.stack((h, k), axis=component_axis)
+    tmp_component_axis = component_axis + 1 if component_axis < coord_axis else component_axis
+    center = np.stack((h, k), axis=tmp_component_axis)
     return center, major_coord, minor_coord
 
 
@@ -270,6 +271,8 @@ def inscribe_ellipse_in_quadrilateral(xy_vertices):
     Ellipses of maximal area and of minimal eccentricity inscribed in a convex quadrilateral.
     Austral. J. Math. Anal. Appl. 2, 1–12 (2005)
     """
+    warnings.warn("Fitting ellipses to irregular quadrilaterals is unstable. "
+                  "Check results manually.")
     # Select which vertices will be lower left, lower right, upper left, and upper right
     # for the purposes of the transformations.
     ll, lr, ur, ul = _identify_vertices(xy_vertices)
@@ -322,7 +325,7 @@ def parametric_ellipse_3d(center, major_coord, minor_coord, phi):
     coord_axis = -1
     # Rotate ellipse vertices to xy-plane
     vertices = np.stack((center, major_coord, minor_coord), axis=coord_axis)
-    xy_vertices, R = transformations.transform_to_xy_plane(vertices)
+    xy_vertices, R = transforms.transform_to_xy_plane(vertices)
     # Calculate angle between semi-major axis and x-axis.
     center_idx = utils._item(xy_vertices.ndim, np.array([component_axis, coord_axis]),
                              np.array([slice(1, 3), 0]))
@@ -372,7 +375,7 @@ def parametric_ellipse_3d(center, major_coord, minor_coord, phi):
     xy_ellipse = np.stack(quadrilateral.parametric_ellipse_angled(h, k, a, b, theta, phi),
                           axis=component_axis)
     # Convert ellipse points to 3-D homogeneous points
-    ellipse = add_z_to_xy(xy_ellipse, component_axis)
+    ellipse = utils.add_z_to_xy(xy_ellipse, component_axis)
     ellipse = utils.convert_to_homogeneous_coords(ellipse, component_axis=component_axis)
     # Rotate back to original plane.
     R_inv = np.linalg.inv(R)
@@ -381,11 +384,3 @@ def parametric_ellipse_3d(center, major_coord, minor_coord, phi):
     item = utils._item(ellipse.ndim, component_axis, slice(1, None))
     ellipse = ellipse[item]
     return ellipse
-
-
-def add_z_to_xy(xy, component_axis):
-    z_shape = list(xy.shape)
-    z_shape[component_axis] = 1
-    z = np.zeros(tuple(z_shape))
-    xyz = np.concatenate((xy, z), axis=component_axis)
-    return xyz

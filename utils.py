@@ -38,7 +38,7 @@ def get_quadrilateral_slopes(ll, lr, ur, ul):
 
 
 def is_parallelogram(vertices, keepdims=True):
-    """Returns True is set of vertices represent a parallelogram."""
+    """xy vertices input"""
     ll = vertices[..., 0:1]
     other_vertices = vertices[..., 1:]
     norms = np.linalg.norm(other_vertices - ll, axis=-2)
@@ -86,6 +86,14 @@ def repeat_over_new_axes(arr, axes, repeats):
        item.insert(axis, np.newaxis)
        tile_shape.insert(axis, repeat)
     return np.tile(arr[tuple(item)], tuple(tile_shape))
+
+
+def add_z_to_xy(xy, component_axis):
+    z_shape = list(xy.shape)
+    z_shape[component_axis] = 1
+    z = np.zeros(tuple(z_shape))
+    xyz = np.concatenate((xy, z), axis=component_axis)
+    return xyz
 
 
 def convert_to_homogeneous_coords(coords, component_axis=-1,
@@ -247,19 +255,3 @@ def hee_from_hee_xyz(x, y, z):
     r = z / np.sin(lat)
 
     return lon * u.rad, lat * u.rad, r
-
-
-def project_point_onto_line(a, b, p, axis=-1):
-    """
-    Project point, p, onto line defined by points, a, b.
-
-    Works in any number of dimensions.
-    Input arrays can have any number of dimensions. But is is assumed that
-    the final dimension represents the axes defining the points while other axes
-    represent different points.
-    """
-    ap = p-a
-    ab = b-a
-    dot_ratio = (dot_product_single_axis(ap, ab, axis=axis)
-                 / dot_product_single_axis(ab, ab, axis=axis))
-    return a + np.expand_dims(dot_ratio, axis) * ab

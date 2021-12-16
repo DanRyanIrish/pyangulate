@@ -8,7 +8,6 @@ from astropy.time import Time
 from astropy.wcs import WCS
 from sunpy.coordinates import HeliocentricEarthEcliptic, HeliographicStonyhurst
 
-from tie_pointing import transformations
 from tie_pointing.elliptical import elliptical
 
 
@@ -30,13 +29,13 @@ def test_inscribe_ellipse_in_3d_para():
 
 
 def test_inscribe_ellipse_in_3d_quad():
-    input_vertices = np.array([[2, 10, 14, 6],
-                               [0, -0.89442719, 2.68328157, 3.57770876],
-                               [0, 0.4472136, -1.34164079, -1.78885438]])
+    input_vertices = np.array([[0, 1, 11, 0],
+                               [0, -0.92387953, 6.46715673, 0.92387953],
+                               [0, -0.38268343, 2.67878403, 0.38268343]])
     input_vertices = np.stack([input_vertices]*2, axis=0)
-    expected_vertices = np.array([[8, 12.46525045, 8.24806947],
-                                  [1.34164078, 1.84087096, -0.43339984],
-                                  [-0.6708204, -0.92043549, 0.21669992]])
+    expected_vertices = np.array([[1.33975054, 2.61013339, 0.91424054],
+                                  [0.54307984, 1.0938545 , 1.38080419],
+                                  [0.22495103, 0.45308937, 0.57194782]])
     expected_vertices = np.stack([expected_vertices]*2, axis=0)
     # Test when input vertices > 2D
     output_vertices = elliptical.inscribe_ellipse_in_3d(input_vertices)
@@ -49,22 +48,21 @@ def test_inscribe_ellipse_in_3d_quad():
 def test_inscribe_ellipse_para():
     vertices = np.stack([np.array([[2, 0], [10, -1], [14, 3], [6, 4]]).T]*2, axis=0)
     output_vertices = elliptical.inscribe_ellipse(vertices)
-    expected_center = np.array([[8, 8], [1.5, 1.5]])
-    expected_major = np.array([[12.46525045, 12.46525045], [2.05815631,  2.05815631]])
-    expected_minor = np.array([[8.24806947,  8.24806947], [-0.48455575, -0.48455575]])
+    expected_center = np.stack([np.array([8, 1.5])]*2, axis=0)
+    expected_major = np.stack([np.array([12.46525045, 2.05815631])]*2, axis=0)
+    expected_minor = np.stack([np.array([8.24806947, -0.48455575])]*2, axis=0)
     expected_vertices = np.stack((expected_center, expected_major, expected_minor), axis=-1)
     assert np.allclose(output_vertices, expected_vertices)
 
 
 def test_inscribe_ellipse_quad():
-    vertices = np.stack([np.array([[2, 0], [10, -1], [16, 7], [6, 4]]).T]*2, axis=0)
-    output_center, output_major, output_minor = elliptical.inscribe_ellipse(vertices)
-    expected_center = np.array([[3.24945734, 2.40058265], [3.24945734, 2.40058265]])
-    expected_major = np.array([[5.77585523, 5.98216733], [5.77585523, 5.98216733]])
-    expected_minor = np.array([[1.20586074, 3.84210605], [1.20586074, 3.84210605]])
-    assert np.allclose(output_center, expected_center)
-    assert np.allclose(output_major, expected_major)
-    assert np.allclose(output_minor, expected_minor)
+    vertices = np.stack([np.array([[0, 0], [1, -1], [11, 7], [0, 1]]).T]*2, axis=0)
+    output_vertices = elliptical.inscribe_ellipse(vertices)
+    expected_center = np.stack([np.array([1.33975054, 0.58782538])]*2, axis=0)
+    expected_major = np.stack([np.array([2.61013339, 1.18397958])]*2, axis=0)
+    expected_minor = np.stack([np.array([0.91424054, 1.49457168])]*2, axis=0)
+    expected_vertices = np.stack((expected_center, expected_major, expected_minor), axis=-1)
+    assert np.allclose(output_vertices, expected_vertices)
 
 
 def test_identify_vertices():
@@ -94,12 +92,12 @@ def test_inscribe_max_area_ellipse_in_parallelogram():
 
 
 def test_inscribe_ellipse_in_quadrilateral():
-    vertices = np.stack([np.array([[2, 0], [10, -1], [16, 7], [6, 4]]).T]*2, axis=0)
+    vertices = np.stack([np.array([[0, 0], [1, -1], [11, 7], [0, 1]]).T]*2, axis=0)
     output_center, output_major, output_minor = \
         elliptical.inscribe_ellipse_in_quadrilateral(vertices)
-    expected_center = np.array([[3.24945734, 2.40058265], [3.24945734, 2.40058265]])
-    expected_major = np.array([[5.77585523, 5.98216733], [5.77585523, 5.98216733]])
-    expected_minor = np.array([[1.20586074, 3.84210605], [1.20586074, 3.84210605]])
+    expected_center = np.stack([np.array([1.33975054, 0.58782538])]*2, axis=0)
+    expected_major = np.stack([np.array([2.61013339, 1.18397958])]*2, axis=0)
+    expected_minor = np.stack([np.array([0.91424054, 1.49457168])]*2, axis=0)
     assert np.allclose(output_center, expected_center)
     assert np.allclose(output_major, expected_major)
     assert np.allclose(output_minor, expected_minor)

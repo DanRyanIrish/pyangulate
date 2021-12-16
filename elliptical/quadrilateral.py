@@ -215,7 +215,7 @@ def inscribe_ellipses_in_quadrilaterals(A, B, C, s, t):
     # For each set of vertices, derive ellipse parameters.
     for i, (A_i, B_i, C_i, s_i, t_i) in enumerate(zip(A.flatten(), B.flatten(), C.flatten(),
                                                       s.flatten(), t.flatten())):
-        h_i, k_i, a_i, b_i, theta_i, fit_successful = inscribe_ellipse_in_single_quadrilateral(
+        h_i, k_i, a_i, b_i, theta_i, fit_successful = _inscribe_ellipse_in_single_quadrilateral(
             A_i, B_i, C_i, s_i, t_i)
         if fit_successful:
             h[i] = h_i
@@ -237,7 +237,7 @@ def inscribe_ellipses_in_quadrilaterals(A, B, C, s, t):
     return h, k, a, b, theta
 
 
-def inscribe_ellipse_in_single_quadrilateral(A, B, C, s, t, **kwargs):
+def _inscribe_ellipse_in_single_quadrilateral(A, B, C, s, t, **kwargs):
     """
     Calculate parameters of ellipse tangent to all sides of a quadrilateral.
 
