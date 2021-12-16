@@ -17,9 +17,26 @@ def test_inscribe_ellipse_in_3d_para():
                                [0, -0.89442719, 2.68328157, 3.57770876],
                                [0, 0.4472136, -1.34164079, -1.78885438]])
     input_vertices = np.stack([input_vertices]*2, axis=0)
-    expected_vertices = np.array([[8, 12.46525045, 7.75193053],
-                                  [1.34164078, 1.84087096, 3.11668141],
-                                  [-0.6708204, -0.92043549, -1.55834072]])
+    expected_vertices = np.array([[8, 12.46525045, 8.24806947],
+                                  [1.34164078, 1.84087096, -0.43339984],
+                                  [-0.6708204, -0.92043549, 0.21669992]])
+    expected_vertices = np.stack([expected_vertices]*2, axis=0)
+    # Test when input vertices > 2D
+    output_vertices = elliptical.inscribe_ellipse_in_3d(input_vertices)
+    assert np.allclose(output_vertices, expected_vertices)
+    # Test when input vertices are 2-D
+    output_vertices0 = elliptical.inscribe_ellipse_in_3d(input_vertices[0])
+    assert np.allclose(output_vertices0, expected_vertices[0])
+
+
+def test_inscribe_ellipse_in_3d_quad():
+    input_vertices = np.array([[2, 10, 14, 6],
+                               [0, -0.89442719, 2.68328157, 3.57770876],
+                               [0, 0.4472136, -1.34164079, -1.78885438]])
+    input_vertices = np.stack([input_vertices]*2, axis=0)
+    expected_vertices = np.array([[8, 12.46525045, 8.24806947],
+                                  [1.34164078, 1.84087096, -0.43339984],
+                                  [-0.6708204, -0.92043549, 0.21669992]])
     expected_vertices = np.stack([expected_vertices]*2, axis=0)
     # Test when input vertices > 2D
     output_vertices = elliptical.inscribe_ellipse_in_3d(input_vertices)

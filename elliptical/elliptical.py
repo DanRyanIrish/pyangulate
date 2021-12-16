@@ -8,29 +8,78 @@ from tie_pointing.elliptical import parallelogram, quadrilateral
 
 
 def inscribe_ellipse_in_3d(vertices):
+    """
+    Calculate parameters of an ellipse tangent to all sides of a quadrilateral.
+
+    Parameters
+    ----------
+    vertices: `numpy.ndarray`
+        The x-y-z locations representing the vertices. Can have any number of dimensions
+        but the penultimate one must be length 3 and represent the x-y-z coordinates,
+        while the last one must be length 4 and represent the four vertices of a specific
+        quadrilateral. Other dimensions will represent other quadrilaterls.
+
+    Returns
+    -------
+    ellipse_vertices: `numpy.ndarray`
+        The x-y-z coordinates of the ellipse center, one of ends of the major axis,
+        and one of the ends of the minor axis.  Dimensions correspond to those of
+        the vertices input, except that the last axis has length 3 and and its
+        elements correspond to the center, major coord, and minor coord, repectively.
+    """
     # Rotate vertices to xy-plane
     component_axis = -2
-    xy_vertices, R1 = transformations.rotate_plane_to_xy(vertices)
-    R1_inv = np.linalg.inv(R1)
-    # Strip z-axis from xy vertices
-    item = [slice(None)] * vertices.ndim
-    item[component_axis] = slice(0, 2)
-    xy_vertices = xy_vertices[tuple(item)]
+    xy_vertices, A = transformations.transform_to_xy_plane(vertices)
+    A_inv = np.linalg.inv(A)
+    # Strip z-axis (which should all now be zeros) and homogeneous axis.
+    z_item = utils._item(xy_vertices.ndim, component_axis, -1)
+    z_vertices = xy_vertices[z_item]
+    if not np.allclose(z_vertices, np.zeros(z_vertices.shape)):
+        raise ValueError(
+            "Transformation to x-y plane failed. All vertices may not be on same plane.")
+    xy_item = utils._item(xy_vertices.ndim, component_axis, slice(1, 3))
+    xy_vertices = xy_vertices[xy_item]
     # Get ellipse vertices in 2D.
     ellipse_xy_vertices = inscribe_ellipse(xy_vertices)
     # Convert 2-D ellipse vertices to 3-D coords and transform back to original plane.
     ellipse_z0_vertices = add_z_to_xy(ellipse_xy_vertices, component_axis)
-    ellipse_vertices = R1_inv @ ellipse_z0_vertices
+    ellipse_hom_vertices = utils.convert_to_homogeneous_coords(
+        ellipse_z0_vertices, component_axis=component_axis)
+    ellipse_vertices = A_inv @ ellipse_hom_vertices
+    # Strip homogeneous axis.
+    nat_item = utils._item(ellipse_vertices.ndim, component_axis, slice(1, None))
+    ellipse_vertices = ellipse_vertices[nat_item]
     return ellipse_vertices
 
 
 def inscribe_ellipse(xy_vertices):
+    """
+    Calculate parameters of an ellipse tangent to all sides of a quadrilateral.
+
+    Parameters
+    ----------
+    xy_vertices: `numpy.ndarray`
+        The x-y locations representing the vertices. Can have any number of dimensions
+        but the penultimate one must be length 2 and represent the x-y coordinates,
+        while the last one must be length 4 and represent the four vertices of a specific
+        quadrilateral. Other dimensions will represent other quadrilaterls.
+
+    Returns
+    -------
+    ellipse_vertices: `numpy.ndarray`
+        The x-y coordinates of the ellipse center, one of ends of the major axis,
+        and one of the ends of the minor axis.  Dimensions correspond to those of
+        the xy_vertices input, except that the last axis has length 3 and and its
+        elements correspond to the center, major coord, and minor coord, repectively.
+    """
     component_axis = -2
     vertex_axis = -1
     scalar_set = False
     if xy_vertices.ndim < 2:
         raise ValueError("vertices must have more than 1 dimensions.")
     elif xy_vertices.ndim == 2:
+        # If input vertices are 2-D, add a dummy leading axis so it works better
+        # with other code elements. Remove this dummy axis before returning result.
         xy_vertices = np.expand_dims(xy_vertices, 0)
         scalar_set = True
     # Define array to hold vertices of the ellipse, i.e. the center and
@@ -39,22 +88,15 @@ def inscribe_ellipse(xy_vertices):
     # Determine which sets of vertices correspond to a parallelogram and
     # which to other quadrilaterals.
     para_idx = utils.is_parallelogram(xy_vertices, keepdims=True)
-    # Calculate ellipse vertices for parallelograms.
+    # Calculate ellipse coordinates for parallelograms.
     if para_idx.any():
-        #para_shape = (int(para_idx.sum() / 2 / 4), 2, 4)
-        #para_vertices = xy_vertices[para_idx].reshape(para_shape)
-        #para_ellipse = inscribe_max_area_ellipse_in_parallelogram(para_vertices)
-        #para_ellipse = tuple(np.swapaxes(coord, -1, -2) for coord in para_ellipse)
-        #para_ellipse = np.stack(para_ellipse, axis=-1)
-        #ellipse_vertices[para_idx[...,:3]] = para_ellipse.flatten()
         ellipse_vertices[para_idx[...,:3]]  = _calculate_and_reshape_ellipse_vertices(
             para_idx, xy_vertices, inscribe_max_area_ellipse_in_parallelogram)
-    # Calculate ellipse vertices for quadrilaterals.
+    # Calculate ellipse coordinates for quadrilaterals.
     quad_idx = np.logical_not(para_idx)
     if quad_idx.any():
-        quad_shape = (int(quad_idx.sum() / 2 / 4), 2, 4)
-        quad_vertices = xy_vertices[quad_idx].reshape(quad_shape)
-        ellipse_vertices[quad_idx] = inscribe_ellipse_in_quadrilateral(quad_vertices)
+        ellipse_vertices[quad_idx[...,:3]]  = _calculate_and_reshape_ellipse_vertices(
+            quad_idx, xy_vertices, inscribe_ellipse_in_quadrilateral)
     # Remove extra dimension if one was added.
     if scalar_set:
         ellipse_vertices = ellipse_vertices[0]
@@ -280,28 +322,20 @@ def parametric_ellipse_3d(center, major_coord, minor_coord, phi):
     coord_axis = -1
     # Rotate ellipse vertices to xy-plane
     vertices = np.stack((center, major_coord, minor_coord), axis=coord_axis)
-    xy_vertices, R = transformations.rotate_plane_to_xy(vertices)
+    xy_vertices, R = transformations.transform_to_xy_plane(vertices)
     # Calculate angle between semi-major axis and x-axis.
-    blank_item = [slice(None)] * vertices.ndim
-    xy_item = copy.deepcopy(blank_item)
-    xy_item[component_axis] = slice(0, 2)
-    center_idx = copy.deepcopy(xy_item)
-    center_idx[coord_axis] = 0
-    xy_center = xy_vertices[tuple(center_idx)]
-    major_idx = copy.deepcopy(xy_item)
-    major_idx[coord_axis] = 1
-    xy_major = xy_vertices[tuple(major_idx)]
-    minor_idx = copy.deepcopy(xy_item)
-    minor_idx[coord_axis] = 2
-    xy_minor = xy_vertices[tuple(minor_idx)]
+    center_idx = utils._item(xy_vertices.ndim, np.array([component_axis, coord_axis]),
+                             np.array([slice(1, 3), 0]))
+    major_idx = utils._item(xy_vertices.ndim, np.array([component_axis, coord_axis]),
+                             np.array([slice(1, 3), 1]))
+    minor_idx = utils._item(xy_vertices.ndim, np.array([component_axis, coord_axis]),
+                             np.array([slice(1, 3), 2]))
+    xy_center = xy_vertices[center_idx]
+    xy_major = xy_vertices[major_idx]
+    xy_minor = xy_vertices[minor_idx]
     tmp_component_axis = component_axis + 1 if component_axis < coord_axis else component_axis
-    tmp_blank_item = [slice(None)] * (vertices.ndim - 1)
-    tmp_x_idx = copy.deepcopy(tmp_blank_item)
-    tmp_x_idx[tmp_component_axis] = 0
-    tmp_x_idx = tuple(tmp_x_idx)
-    tmp_y_idx = copy.deepcopy(tmp_blank_item)
-    tmp_y_idx[tmp_component_axis] = 1
-    tmp_y_idx = tuple(tmp_y_idx)
+    tmp_x_idx = utils._item(xy_center.ndim, tmp_component_axis, 0)
+    tmp_y_idx = utils._item(xy_center.ndim, tmp_component_axis, 1)
     shifted_xy_major = xy_major - xy_center
     shifted_x_major = shifted_xy_major[tmp_x_idx]
     shifted_y_major = shifted_xy_major[tmp_y_idx]
@@ -309,12 +343,18 @@ def parametric_ellipse_3d(center, major_coord, minor_coord, phi):
     m2 = shifted_y_major / shifted_x_major
     # Shift angle depending on quadrant.
     theta = np.arctan(np.abs((m2 - m1) / (1 + m1*m2)))
+    theta_is_scalar = False
+    if np.isscalar(theta):
+        theta = np.array([theta])
+        theta_is_scalar = True
     idx = np.logical_and(shifted_x_major < 0, shifted_y_major >= 0)
     theta[idx] = np.pi - theta[idx]
     idx = np.logical_and(shifted_x_major < 0, shifted_y_major < 0)
     theta[idx] += np.pi
     idx = np.logical_and(shifted_x_major >= 0, shifted_y_major < 0)
     theta[idx] = 2*np.pi - theta[idx]
+    if theta_is_scalar:
+        theta = theta[0]
     # Calculate semi-axes.
     a = np.linalg.norm(xy_major - xy_center, axis=tmp_component_axis)
     b = np.linalg.norm(xy_minor - xy_center, axis=tmp_component_axis)
@@ -325,17 +365,21 @@ def parametric_ellipse_3d(center, major_coord, minor_coord, phi):
     k = np.expand_dims(k, coord_axis)
     a = np.expand_dims(a, coord_axis)
     b = np.expand_dims(b, coord_axis)
-    theta = np.expand_dims(theta, -coord_axis)
+    theta = np.expand_dims(theta, coord_axis)
     shape = [1] * h.ndim
     shape[coord_axis] = len(phi)
     phi = phi.reshape(tuple(shape))
     xy_ellipse = np.stack(quadrilateral.parametric_ellipse_angled(h, k, a, b, theta, phi),
                           axis=component_axis)
-    # Convert ellipse points to 3-D
+    # Convert ellipse points to 3-D homogeneous points
     ellipse = add_z_to_xy(xy_ellipse, component_axis)
+    ellipse = utils.convert_to_homogeneous_coords(ellipse, component_axis=component_axis)
     # Rotate back to original plane.
     R_inv = np.linalg.inv(R)
     ellipse = R_inv @ ellipse
+    # Strip homogeneous axis.
+    item = utils._item(ellipse.ndim, component_axis, slice(1, None))
+    ellipse = ellipse[item]
     return ellipse
 
 
