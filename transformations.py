@@ -5,13 +5,13 @@ import numpy as np
 from tie_pointing import utils
 
 
-def rotate_plane_to_xy(points):
+def transform_to_xy_plane(points):
     """Rotate points on a 2-D plane in 3-D space to the x-y plane.
 
     Parameters
     ----------
     points: `numpy.ndarray`
-        Points on the same 2-D in 3-D space. Can have any shape but penultimate axis
+        Points on the same 2-D plane in 3-D space. Can have any shape but penultimate axis
         must give the 3-D coordinates of the points and the final axis must represent
         points in a single plane.  The order of the coordinate components must be (x, y, z).
 
@@ -34,6 +34,46 @@ def rotate_plane_to_xy(points):
         raise ValueError("Points must be at least 2-D with penultimate axis of length 3. "
                          f"Input shape: {points.shape}")
     # Derive unit vector normal to the plane in which the first two points lie.
+    plane_normal = _derive_unit_normal(points, component_axis, coord_axis)
+    # Derive rotation to make plane parallel to x-y plane
+    R = derive_plane_rotation_matrix(plane_normal, np.array([0, 0, 1]))
+    rotated_points = R @ points
+    # Derive affine transformation including shift to x-y axis.
+    shift_item = utils._item(points.ndim, np.array([component_axis, coord_axis]),
+                             np.array([2, 0]))
+    shift = rotated_points[shift_item]
+    A = np.eye(4)
+    ext_dim = rotated_points.ndim - 2
+    if ext_dim > 0:
+        ext_shape = points.shape[:-2]
+        A = utils.repeat_over_new_axes(A, np.zeros(ext_dim), np.array(ext_shape))
+    A[..., -1, 0] = -shift
+    # Convert points to homogenous coords and translate to x-y plane.
+    hom_rot_points = utils.convert_to_homogeneous_coords(
+        rotated_points, component_axis=component_axis, trailing_convention=False)
+    xy_points = A @ hom_rot_points
+    # Combine rotation and shift into affine matrix and return transformed points and matrix.
+    A[..., 1:, 1:] = R
+    return xy_points, A
+
+
+def _derive_unit_normal(points, component_axis, coord_axis):
+    # Derive unit vector normal to the plane in which the first three points lie.
+    ndim = points.ndim
+    item0 = utils._item(ndim, coord_axis, 0)
+    item1 = utils._item(ndim, coord_axis, 1)
+    item2 = utils._item(ndim, coord_axis, 2)
+    vector1 = points[item1] - points[item0]
+    vector2 = points[item2] - points[item0]
+    tmp_component_axis = component_axis + 1 if component_axis < coord_axis else component_axis
+    plane_normal = np.cross(vector1, vector2, axis=tmp_component_axis)
+    plane_normal = plane_normal / np.linalg.norm(plane_normal, axis=tmp_component_axis,
+                                                 keepdims=True)
+    return plane_normal
+
+
+def _derive_plane_normal(points, component_axis, coord_axis):
+    # Derive unit vector normal to the plane in which the first two points lie.
     i = 0
     cross_points = []
     while i < points.shape[coord_axis] and len(cross_points) < 2:
@@ -45,11 +85,7 @@ def rotate_plane_to_xy(points):
         raise ValueError("Could not find 2 sets of vertices not including the origin.")
     plane_normal = np.cross(*cross_points, axis=component_axis)
     plane_normal = plane_normal / np.linalg.norm(plane_normal, axis=component_axis, keepdims=True)
-    rotation = derive_plane_rotation_matrix(plane_normal[..., 0], np.array([0, 0, 1]))
-    xy_points = rotation @ points
-    item = [slice(None)] * points.ndim
-    item[component_axis] = slice(0, 2)
-    return xy_points, rotation
+    return plane_normal
 
 
 def derive_plane_rotation_matrix(plane_normal, new_plane_normal):
@@ -103,17 +139,13 @@ def derive_plane_rotation_matrix(plane_normal, new_plane_normal):
     C = 1 - cos
     rot_axis = np.cross(plane_normal, new_plane_normal, axis=component_axis)
     rot_axis  = rot_axis / np.linalg.norm(rot_axis, axis=component_axis, keepdims=True)
-    x_idx, y_idx, z_idx = 0, 1, 2
-    blank_item = [slice(None)] * rot_axis.ndim
-    item = copy.deepcopy(blank_item)
-    item[component_axis] = x_idx
-    x = rot_axis[tuple(item)]
-    item = copy.deepcopy(blank_item)
-    item[component_axis] = y_idx
-    y = rot_axis[tuple(item)]
-    item = copy.deepcopy(blank_item)
-    item[component_axis] = z_idx
-    z = rot_axis[tuple(item)]
+    ndim = rot_axis.ndim
+    x_item = utils._item(ndim, component_axis, 0)
+    y_item = utils._item(ndim, component_axis, 1)
+    z_item = utils._item(ndim, component_axis, 2)
+    x = rot_axis[x_item]
+    y = rot_axis[y_item]
+    z = rot_axis[z_item]
     R = np.empty(tuple(list(cos.shape) + [3, 3]))
     R[..., 0, 0] = x**2 * C + cos
     R[..., 0, 1] = x * y * C - z * sin

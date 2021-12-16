@@ -60,6 +60,12 @@ def is_parallelogram(vertices, keepdims=True):
     return para_idx
 
 
+def _item(ndim, axes, slices):
+    item = np.array([slice(None)] * ndim, dtype=object)
+    item[axes] = slices
+    return tuple(item)
+
+
 def repeat_over_new_axes(arr, axes, repeats):
     if np.isscalar(axes):
         axes = np.array([axes])
@@ -67,13 +73,13 @@ def repeat_over_new_axes(arr, axes, repeats):
         repeats = np.array([repeats])
     if len(axes) != len(repeats):
         raise ValueError("axes and repeats must be same length.")
-    axes = np.asarray(axes)
-    repeats = np.asarray(repeats)
+    axes = np.asarray(axes, dtype=int)
+    repeats = np.asarray(repeats, dtype=int)
     axes[axes < 0] += arr.ndim + 1
     sort_idx = np.argsort(axes)
     axes = axes[sort_idx]
     repeats = repeats[sort_idx]
-    axes = axes + np.arange(arr.ndim)
+    axes = axes + np.arange(arr.ndim, dtype=int)
     item = [slice(None)] * arr.ndim
     tile_shape = [1] * arr.ndim
     for axis, repeat in zip(axes, repeats):
