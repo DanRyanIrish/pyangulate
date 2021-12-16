@@ -59,3 +59,21 @@ def test_triangulate():
                                      x_pix_feature_solo, y_pix_feature_solo,
                                      wcs_earth, wcs_solo)
     assert u.allclose(output.cartesian.xyz.squeeze(), feature_loc.cartesian.xyz, rtol=0.005)
+
+
+def test_derive_epipolar_coords_of_a_point():
+    # Define inputs
+    d_2 = np.array([[[1.00922007]]])
+    v_2 = np.array([[[[-0.62790057, -0.77829356]]]])
+    s_2 = np.array([[[ 0.26651405, -0.26651409,  0.26406913, -0.26406917]]]) * u.deg
+    d_1 = np.array([[[0.91737623]]])
+    v_1 = np.array([[[[-0.69076333, 0.72308092]]]])
+    s_1 = np.array([[[ 0.24894238,  0.32711954, -0.32425554, -0.25179925]]]) * u.deg
+    # Define expected output
+    expected_dr_a = np.array([[[-0.00074626,  0.00658655, -0.00652752,  0.00068729]]])
+    expected_dr_b = np.array([[[ 0.00655145,  0.00068769, -0.0006831 , -0.00655595]]])
+    # Execute code
+    output_dr_a, output_dr_b = triangulate.derive_epipolar_coords_of_a_point(
+        d_1, v_1, s_1, d_2, v_2, s_2)
+    assert np.allclose(output_dr_a.value, expected_dr_a)
+    assert np.allclose(output_dr_b.value, expected_dr_b)

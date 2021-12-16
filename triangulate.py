@@ -250,9 +250,9 @@ def derive_epipolar_coords_of_a_point(d_1, v_1, s_1, d_2, v_2, s_2):
     """
     # Derive the unit vector rotated 90 degrees in the epipolar plane
     # from the unit vector pointing from the observer to the origin.
-    e_1 = v_1[...,::-1]
+    e_1 = v_1[...,::-1].copy()
     e_1[...,1] *= -1
-    e_2 = v_2[...,::-1]
+    e_2 = v_2[...,::-1].copy()
     e_2[...,1] *= -1
     # Derive the terms of the required translation equations.
     b_term1 = d_2 * np.tan(s_2) / e_2[...,0]
