@@ -303,13 +303,10 @@ def inscribe_ellipse_in_quadrilateral(xy_vertices):
                                                        component_axis=-2)
     iso_vertices = A @ hom_vertices
     # Extract variables for deriving ellipse.
-    A = iso_vertices[..., 1, 1]
-    B = iso_vertices[..., 2, 1]
-    C = iso_vertices[..., 2, 3]
     s = iso_vertices[..., 1, 2]
     t = iso_vertices[..., 2, 2]
     # Fit ellipse to quadrilateral
-    h, k, a, b, theta = quadrilateral.inscribe_ellipses_in_quadrilaterals(A, B, C, s, t)
+    h, k, a, b, theta = quadrilateral.get_parameters_of_max_area_ellipse_in_quadrilateral(s, t)
     # Finally, find the coordinates of the points at one end of the major axes.
     ellipse = partial(quadrilateral.parametric_ellipse_angled, h, k, a, b, theta)
     xy_axis = -1

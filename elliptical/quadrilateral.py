@@ -7,25 +7,24 @@ import scipy.optimize
 from tie_pointing import utils
 
 
-def compute_isometry_transform(new_origin, new_y, trailing_convention=False):
+def compute_isometry_transform(ll, lr, ul, trailing_convention=False):
     """
     Calculate the affine transformation matrix that does the following:
     1. translates by -new_origin (i.e. the origin is moved to new_origin);
-    2. rotates the line from the new_origin to new_y so it is aligned with the y-axis.
+    2. rotates the line from the new_origin to new_y so it is aligned with the y-axis;
+    3. Shears in the y-direction so the bottom side lies along the x-axis;
+    4. Scales in x and y so the lower right vertes sits at (1, 0) and the
+    upper left sits at (0, 1).
 
     Also calculate the inverse affine transform.
 
     Parameters
     ----------
-    new_origin: `numpy.ndarray`
-        The point which serves as the new origin, i.e. the matrix translates
-        by subtracting this point.
-        The last dimension must be length 2 and represent the coordinate's x-y components.
-        Other dimensions are assumed to represent other transformations and are
-        broadcast through the calculation.
-    new_y: `numpy.ndarray`
-        The point which, along with new_origin, defines the new y-axis.
-        Must be same shape as new_origin and dimensions are interpretted in the same way.
+    ll, lr, ul:`numpy.ndarray`
+        The lower left, lower right and upper left vertices. Must all be same shape.
+        Can have any number of dimensions but last one must be length-2 and represent
+        the x-y coordinates of the vertices.  Other dimensions are assumed to represent
+        other sets of vertices reuqiring their own transform.
     trailing_convention: `bool`
         Determines whether the non-physical dimension in the affine transformation will be
         the first or last dimension.
@@ -67,17 +66,23 @@ def compute_isometry_transform(new_origin, new_y, trailing_convention=False):
     Part 2: https://www.youtube.com/watch?v=7z1rs9Di77s&list=PLDFA8FCF0017504DE&index=11
     """
     # Sanitize inputs
-    input_shape = new_origin.shape
-    if ((new_y.shape != input_shape) or (new_origin.shape[-1] != new_y.shape[-1] != 2)):
+    input_shape = ll.shape
+    if ((lr.shape != ul.shape != input_shape) or (ll.shape[-1] != lr.shape[-1] != ul.shape != 2)):
         raise ValueError("All inputs must have same shape and final axes must be length 2. "
-                         f"new_origin: {new_origin.shape}. "
-                         f"new_y: {new_y.shape}. ")
+                         f"ll: {ll.shape}. "
+                         f"lr: {lr.shape}. "
+                         f"ul: {ul.shape}.")
+    # Convert vertices to homogeneous coords.
     if trailing_convention:
         hom_idx = -1
         mat_slice = slice(0, 2)
     else:
         hom_idx = 0
         mat_slice = slice(1, 3)
+    vertices = np.stack((ll, lr, ul), axis=-1)
+    component_axis = -2
+    hom_vertices = utils.convert_to_homogeneous_coords(vertices, component_axis=component_axis,
+                                                       trailing_convention=trailing_convention)
     tiled_identity = np.eye(3)
     if len(input_shape) > 1:
         tiled_identity = utils.repeat_over_new_axes(
@@ -85,36 +90,44 @@ def compute_isometry_transform(new_origin, new_y, trailing_convention=False):
     # Calculate matrix that shifts origin to new_origin.
     T = copy.deepcopy(tiled_identity)
     T[..., hom_idx] = utils.convert_to_homogeneous_coords(
-        -new_origin, trailing_convention=trailing_convention)
-    T_inv = copy.deepcopy(tiled_identity)
-    T_inv[..., hom_idx] = utils.convert_to_homogeneous_coords(
-        new_origin, trailing_convention=trailing_convention)
+        -ll, trailing_convention=trailing_convention)
+    new_vertices = (T @ hom_vertices)[..., mat_slice, :]
 
-    # Calculate rotation matrix that brings line from new_origin to new_y in line with y_axis.
-    shifted_y = new_y - new_origin
+    # Calculate rotation matrix that brings line from lower left to upper left vertices
+    # in line with y_axis.
+    shifted_y = new_vertices[..., 2] - new_vertices[..., 0]
     theta = -np.arctan(shifted_y[..., 1] / shifted_y[..., 0]) + np.pi/2
     if not np.isscalar(theta):
         theta[shifted_y[..., 0] < 0] += np.pi
     elif shifted_y[0] < 0:
         theta += np.pi
-    r = np.array([[np.cos(theta), -np.sin(theta)],
+    R = np.array([[np.cos(theta), -np.sin(theta)],
                   [np.sin(theta), np.cos(theta)]])
-    r_inv = np.array([[np.cos(theta), np.sin(theta)],
-                      [-np.sin(theta), np.cos(theta)]])
-    if r.ndim > 2:
-        # If R has more that 2 dimensions, move its 2 matrix dimensions to last 2 axes.
-        r = np.moveaxis(r, 0, -1)
-        r = np.moveaxis(r, 0, -1)
-        r_inv = np.moveaxis(r_inv, 0, -1)
-        r_inv = np.moveaxis(r_inv, 0, -1)
-    R = copy.deepcopy(tiled_identity)
-    R[..., mat_slice, mat_slice] = r
-    R_inv = copy.deepcopy(tiled_identity)
-    R_inv[..., mat_slice, mat_slice] = r_inv
+    if R.ndim > 2:
+        # If R has more than 2 dimensions, move its 2 matrix dimensions to last 2 axes.
+        R = np.moveaxis(R, 0, -1)
+        R = np.moveaxis(R, 0, -1)  # Repetition is intentional.
+    new_vertices = R @ new_vertices
 
+    # Calculate shear in y direction needed so bottom side lies along x-axis.
+    m = new_vertices[..., 1, 1] / new_vertices[..., 0, 1]
+    S1 = copy.deepcopy(tiled_identity[..., :2, :2])
+    S1[..., 1, 0] = -m
+    new_vertices = S1 @ new_vertices
+
+    # Calculate shift to bring lower right and upper left vertices to (1, 0) and (0, 1).
+    S2 = copy.deepcopy(tiled_identity[..., :2, :2])
+    S2[..., 0, 0] = 1 / new_vertices[..., 0, 1]
+    S2[..., 1, 1] = 1 / new_vertices[..., 1, 2]
+
+    # Combine linear transform and extend result for homogenous coordinates
+    # so it can be combined with shift.
+    L = S2 @ S1 @ R
+    M = copy.deepcopy(tiled_identity)
+    M[..., mat_slice, mat_slice] = L
     # Combine translation and rotation into affine transform.
-    A = R @ T
-    A_inv = T_inv @ R_inv
+    A = M @ T
+    A_inv = np.linalg.inv(A)
     return A, A_inv
 
 
@@ -144,22 +157,19 @@ def parametric_ellipse_angled(h, k, a, b, theta, phi):
     return x, y
 
 
-def inscribe_ellipses_in_quadrilaterals(A, B, C, s, t):
+def get_parameters_of_max_area_ellipse_in_quadrilateral(s, t):
     """
-    Calculate parameters of ellipse(s) tangent to all sides of a quadrilateral(s).
+    Calculate parameters of mas area ellipse(s) tangent to all sides of a quadrilateral(s).
 
     The quadrilateral must not be a parallelogram and the left and right sides must not be parallel.
-    The lower left vertex must be at the origin, while the upper left must be on the y-axis.
-    Algorithm is based on [1], [2] and [3] (see references section).
-    Kwargs are passed to scipy.optimize.minimize.
+    The lower left, lower right and upper left vertices must be at (0, 0), (1, 0) and (0, 1),
+    respectively, where coordinates are given as (x, y).
+    The upper right vertex is given by (s, t) where s > 0 and t > 0.
+    Since the quadrilateral is not a parallelogram => s != 0.
+    Algorithm is based on Theorem 3.3. in [1] (see references section).
 
     Parameters
     ----------
-    A, B: `float` or `numpy.ndarray`
-        The x and y coordinates of the lower right vertex
-    C: `float` or `numpy.ndarray`
-        The y coordinate of the upper left vertex. The x coord must be 0.
-        If array, must be broadcastable other inputs.
     s, t:
         The x and y coordinates of the upper right vertex.
         If array, must be broadcastable other inputs.
@@ -175,209 +185,124 @@ def inscribe_ellipses_in_quadrilaterals(A, B, C, s, t):
 
     References
     ----------
-    [1] Byrne, J.P et al.
-    Propagation of an Earth-directed coronal mass ejection in three dimensions
-    Nat. Comms, DOI: 10.1038/ncomms1077, (2010)
-    [2] Horwitz, A.
-    Finding ellipses and hyperbolas tangent to two, three, or four given lines.
-    Southwest J. Pure Appl. Math. 1, 6–32 (2002)
-    [3] Horwitz, A.
+    [1] Horwitz, A.
     Ellipses of maximal area and of minimal eccentricity inscribed in a convex quadrilateral.
     Austral. J. Math. Anal. Appl. 2, 1–12 (2005)
     """
-    # Sanitize input.
-    shape_error_msg = "inputs must all be same shape"
-    scalar_input = np.isscalar(A)
-    if scalar_input:
-        if not (np.isscalar(B) and np.isscalar(C) and np.isscalar(s) and np.isscalar(t)):
-            raise ValueError(shape_error_msg)
-        A = np.array([A])
-        B = np.array([B])
-        C = np.array([C])
-        s = np.array([s])
-        t = np.array([t])
-    input_shape = A.shape
-    if input_shape != B.shape != C.shape != s.shape != t.shape:
-        raise ValueError(shape_error_msg)
-    # Define arrays to hold output.
-    input_size = A.size
-    bad_value = np.nan
-    h = np.empty(input_size, dtype=float)
-    h[:] = bad_value
-    k = np.empty(input_size, dtype=float)
-    k[:] = bad_value
-    a = np.empty(input_size, dtype=float)
-    a[:] = bad_value
-    b = np.empty(input_size, dtype=float)
-    b[:] = bad_value
-    theta = np.empty(input_size, dtype=float)
-    theta[:] = bad_value
-    # For each set of vertices, derive ellipse parameters.
-    for i, (A_i, B_i, C_i, s_i, t_i) in enumerate(zip(A.flatten(), B.flatten(), C.flatten(),
-                                                      s.flatten(), t.flatten())):
-        h_i, k_i, a_i, b_i, theta_i, fit_successful = _inscribe_ellipse_in_single_quadrilateral(
-            A_i, B_i, C_i, s_i, t_i)
-        if fit_successful:
-            h[i] = h_i
-            k[i] = k_i
-            a[i] = a_i
-            b[i] = b_i
-            theta[i] = theta_i
-    if scalar_input:
-        h = h[0]
-        k = k[0]
-        a = a[0]
-        b = b[0]
+    # Sanitize inputs. Quadrilateral vertices must be (0, 0), (1, 0), (s, t), (0, 1)
+    # where s > 0 and t > 0.  Furthermore, quadrilateral cannot be a parallelogram, i.e. s != 1.
+    if s <= 0 or s == 1:
+        raise ValueError("s must be >0 and not equal to 1")
+    if t <= 0:
+        raise ValueError("t must be >0")
+    # Derive ellipse center.
+    if s == 1:
+        h, k = _derive_ellipse_center_trapezoid(t)
     else:
-        h = h.reshape(input_shape)
-        k = k.reshape(input_shape)
-        a = a.reshape(input_shape)
-        b = b.reshape(input_shape)
-        theta = theta.reshape(input_shape)
+        h, k = _derive_ellipse_center_quadrilateral(s, t)
+    # Derive ellipse semi-major and minor axes.
+    a, b = _derive_ellipse_axes(s, t)
+    # Derive ellipse tilt angle (anti-clockwise angle from x-axis to semi-major axis).
+    theta = _derive_ellipse_tilt(h, k, a, b, s, t)
     return h, k, a, b, theta
 
 
-def _inscribe_ellipse_in_single_quadrilateral(A, B, C, s, t, **kwargs):
+def _derive_ellipse_center_quadrilateral(s, t):
     """
-    Calculate parameters of ellipse tangent to all sides of a quadrilateral.
+    Derive coordinate of center of ellipse inscribed in a quadrilateral.
 
-    The quadrilateral must not be a parallelogram and the left and right sides must not be parallel.
-    The lower left vertex must be at the origin, while the upper left must be on the y-axis.
-    Algorithm is based on [1], [2] and [3] (see references section).
-    Kwargs are passed to scipy.optimize.minimize.
+    See Theorem 3.3 of [1] for algorithm.
 
     Parameters
     ----------
-    A, B: `float` or `numpy.ndarray`
-        The x and y coordinates of the lower right vertex
-    C: `float` or `numpy.ndarray`
-        The y coordinate of the upper left vertex. The x coord must be 0.
-        If array, must be broadcastable other inputs.
     s, t:
         The x and y coordinates of the upper right vertex.
         If array, must be broadcastable other inputs.
 
     Returns
     -------
-    h, k: `float`
+    h, k: `float` or `numpy.ndarray`
         The x and y coordinate of the ellipse center.
-    a, b: `float`
-        The semi-major and semi-minor axes, respectively.
-    theta: `float`
-        The rotation angle of the ellipse from the x-axis.
-    fit_successful: `bool`
-        True if the residuals have been minimized to 0.  False otherwise.
 
     References
     ----------
-    [1] Byrne, J.P et al.
-    Propagation of an Earth-directed coronal mass ejection in three dimensions
-    Nat. Comms, DOI: 10.1038/ncomms1077, (2010)
-    [2] Horwitz, A.
-    Finding ellipses and hyperbolas tangent to two, three, or four given lines.
-    Southwest J. Pure Appl. Math. 1, 6–32 (2002)
-    [3] Horwitz, A.
+    [1] Horwitz, A.
     Ellipses of maximal area and of minimal eccentricity inscribed in a convex quadrilateral.
     Austral. J. Math. Anal. Appl. 2, 1–12 (2005)
     """
-    # Derive bounds
-    bounds = kwargs.pop("bounds", None)
-    if bounds is None:
-        mu1_x = (C + A) / 2
-        mu2_x = s / 2
-        mu_x = [mu1_x, mu2_x]
-        h_bounds = (min(mu_x), max(mu_x))
-        theta_bounds = (0, np.pi)
-        bounds = (h_bounds, theta_bounds)
-    # Derive initial guesses.
-    x0 = kwargs.pop("x0", None)
-    if x0 is None:
-        h_init = np.linspace(h_bounds[0], h_bounds[1], 100)
-        h_init = h_init[np.logical_and(h_init != A/2, h_init != s/2)]
-        h_init = h_init.reshape(len(h_init), 1)
-        theta_init = np.linspace(0, np.pi, 100)
-        theta_init = theta_init.reshape(1, len(theta_init))
-        resid = _ellipse_tangent_residuals(A, B, C, s, t, [h_init, theta_init])
-        idx = np.where(resid == resid.min())
-        x0 = (h_init[:, 0][idx[0]], theta_init[0][idx[1]])
-    # Find optimal h and theta.
-    func = partial(_ellipse_tangent_residuals, A, B, C, s, t)
-    optimize_result = scipy.optimize.minimize(func, x0, bounds=bounds, **kwargs)
-    h, theta = optimize_result.x
-    fit_successful = np.isclose(optimize_result.fun, 0)
-    # Derive corresponding ellipse parameters
-    k, a, b = _derive_ellipse_axes(A, B, C, s, t, h)
-    return h, k, a, b, theta, fit_successful
+    A, B, C = 1, 0, 1
+    # Derive ellipse center, h and k
+    mu_x = (0.5, 0.5 * s)
+    h_bounds = (min(mu_x), max(mu_x))
+    alpha = -24 * (t - 1)
+    beta = 8 * ((s+1) * (t-1) - s)
+    gamma = c = 2*s*(s - t + 2)
+    delta = np.sqrt(beta**2 - 4 * alpha * gamma)
+    h_roots = np.array([-beta - delta, -beta + delta]) / (2*alpha)
+    h = h_roots[np.logical_and(h_roots > h_bounds[0], h_roots < h_bounds[1])]
+    if len(h) != 1:
+        raise ValueError("Unique solution to h not found within valid range.")
+    h = h[0]
+    k = (h - s/2) * (t - B - C) / (s - A) + t/2
+    return h, k
 
 
-def _ellipse_tangent_residuals(A, B, C, s, t, x):
-    h, theta = x[0], x[1]
-    m0 = B / A
-    c0 = B - m0 * A
-    m1 = (t - B) / (s - A)
-    c1 = t - m1 * s
-    m2 = (C - t) / (-s)
-    c2 = C
-    delta0 = _ellipse_tangent_discriminant(A, B, C, s, t, m0, c0, h, theta)
-    delta1 = _ellipse_tangent_discriminant(A, B, C, s, t, m1, c1, h, theta)
-    delta2 = _ellipse_tangent_discriminant(A, B, C, s, t, m2, c2, h, theta)
-    resid = delta0**2 + delta1**2 + delta2**2
-    return resid
-
-
-def _ellipse_tangent_discriminant(A, B, C, s, t, m, c, h, theta):
+def  _derive_ellipse_center_trapezoid(s, t):
     """
-    Calculate the discriminant, which when zero, means the ellipse is tangent to the line.
+    Derive coordinate of center of ellipse inscribed in a trapezoid.
+
+    See Theorem 3.3 of [1] for algorithm.
 
     Parameters
     ----------
-    A, B: `float` or `numpy.ndarray`
-        The x and y coordinates of the lower right vertex
-    C: `float` or `numpy.ndarray`
-        The y coordinate of the upper left vertex. The x coord must be 0.
-        If array, must be broadcastable other inputs.
     s, t:
         The x and y coordinates of the upper right vertex.
-        If array, must be broadcastable other inputs.
-    h:
-        The x coordinate of the ellipse center.
-        The y coordinate, k, is derived from h as it must lie on the line segment
-        joining the midpoints of the quadrilateral diagonals.
         If array, must be broadcastable other inputs.
 
     Returns
     -------
-    k: `float` or `numpy.ndarray`
-        The y coordinate of the ellipse center.
+    h, k: `float` or `numpy.ndarray`
+        The x and y coordinate of the ellipse center.
+
+    References
+    ----------
+    [1] Horwitz, A.
+    Ellipses of maximal area and of minimal eccentricity inscribed in a convex quadrilateral.
+    Austral. J. Math. Anal. Appl. 2, 1–12 (2005)
+    """
+    h = 0.5
+    k = 0.25 * t + 0.25
+    return h, k
+
+
+def _derive_ellipse_axes(h, k, s, t):
+    """
+    Derive semi-major and minor axes of an ellipse inscribed in a quadrilateral.
+
+    That is, the ellipse is tangent to all four sides.
+    See [1] for algorithm.
+
+    Parameters
+    ----------
+    s, t:
+        The x and y coordinates of the upper right vertex.
+        If array, must be broadcastable other inputs.
+    h, k: `float` or `numpy.ndarray`
+        The x and y coordinate of the ellipse center.
+
+    Returns
+    -------
     a, b: `float` or `numpy.ndarray`
         The semi-major and semi-minor axes, respectively.
+
+    References
+    ----------
+    [1] Horwitz, A.
+    Ellipses of maximal area and of minimal eccentricity inscribed in a convex quadrilateral.
+    Austral. J. Math. Anal. Appl. 2, 1–12 (2005)
     """
-    k, a, b = _derive_ellipse_axes(A, B, C, s, t, h)
-    sin = np.sin(theta)
-    cos = np.cos(theta)
-    kappa = c - k
-    alpha = ((cos**2 + 2 * m * cos * sin + m**2 * sin**2) / a**2
-             + (sin**2 - 2 * m * cos * sin + m**2 * cos**2) / b**2)
-    beta = ((2 * m * kappa * sin**2 + 2 * (kappa - m * h) * cos * sin - 2 * h * cos**2) / a**2
-            + (2 * kappa * m * cos**2 - 2 * (kappa - m * h) * cos * sin - 2 * h * sin**2) / b**2)
-    gamma = ((h**2 * cos**2 - 2 * h * kappa * cos * sin + kappa**2 * sin**2) / a**2
-             + (h**2 * sin**2 + 2 * h * kappa * cos * sin + kappa**2 * cos**2) / b**2 - 1)
-    return beta**2 - 4 * alpha * gamma
-
-
-def _derive_ellipse_axes(A, B, C, s, t, h):
-    if s == A:
-        raise ValueError("Invalid vertices. Right side must not be vertical.")
-    h_bounds = [s/2, (C + A) / 2]
-    if np.isscalar(h):
-        h_outofbounds = h < min(h_bounds) or h > max(h_bounds)
-    else:
-        h_outofbounds = np.logical_or(h < min(h_bounds), h > max(h_bounds)).any()
-    if h_outofbounds:
-        raise ValueError(f"h must lie between the x coords of the midpoints of diagonals: h={h}; range={(min(h_bounds), max(h_bounds))}")
     s_A = s - A
-    k = (h - s/2) * (t - B - C) / s_A + t/2
-    h_A_2 = (h - A) / 2
+    h_A_2 = h - A/2
     r1 = (
             4 * (s_A**2 - (t - B - C)**2) * h_A_2**2
             + 4 * s_A * (A*s_A + B*(B - t) + C*(C - t)) * h_A_2
@@ -393,4 +318,18 @@ def _derive_ellipse_axes(A, B, C, s, t, h):
     W = 0.25 * (C / s_A**2) * (2 * (B*s - A*(t - C))*h - A*C*s) * (2*h - A) * (2*h - s)
     a = np.sqrt(0.5 * (np.sqrt(R**2 + 4*W) + R))
     b = np.sqrt(0.5 * (np.sqrt(R**2 + 4*W) - R))
-    return k, a, b
+    return a, b
+
+
+def _derive_ellipse_tilt(h, k, a, b, s, t):
+    # Define coefficients of the lines making up the quadrilateral except the line along the y-axis.
+    # It's slope is inf and so cannot be used. Fortunately, we don't need it.
+    A, B, C = 1, 0, 1
+    m0 = B / A
+    c0 = B - m0 * A
+    m1 = (t - B) / (s - A)
+    c1 = t - m1 * s
+    m2 = (C - t) / (-s)
+    c2 = C
+    raise NotImplementedError(
+        "Algorithm to find ellipse tilt not implemented. Implement it here if you need it.")
