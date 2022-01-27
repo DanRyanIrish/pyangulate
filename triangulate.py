@@ -88,7 +88,7 @@ def triangulate(observer1, observer2, epipolar_origin,
         y_feature_obs1 = np.array([y_feature_obs1])
     if isinstance(x_feature_obs2, numbers.Real):
         x_feature_obs2 = np.array([x_feature_obs2])
-    if isinstance(y_feature_obs1, numbers.Real):
+    if isinstance(y_feature_obs2, numbers.Real):
         y_feature_obs2 = np.array([y_feature_obs2])
     feature_shape = x_feature_obs1.shape
     if (y_feature_obs1.shape != feature_shape or x_feature_obs2.shape != feature_shape
@@ -197,12 +197,14 @@ def triangulate(observer1, observer2, epipolar_origin,
     # Derive the a-b coordinates of intersection of the lines of view.
     dr_a, dr_b = derive_epipolar_coords_of_a_point(d_2, v_2, s_2, d_1, v_1, s_1)
     # Convert feature's a-b coords to xyz coords
-    feature_xyz = (utils.calculate_point_along_3d_line(dv_a,
-                                                       epipolar_origin_xyz,
-                                                       np.expand_dims(dr_a.value, -1))
-                   + utils.calculate_point_along_3d_line(dv_b,
-                                                         epipolar_origin_xyz,
-                                                         np.expand_dims(dr_b.value, -1)))
+    feature_xyz = (
+            (utils.calculate_point_along_3d_line(dv_a,
+                                                 epipolar_origin_xyz,
+                                                 np.expand_dims(dr_a.value, -1))
+             + utils.calculate_point_along_3d_line(dv_b,
+                                                   epipolar_origin_xyz,
+                                                   np.expand_dims(dr_b.value, -1))
+                  ) - epipolar_origin_xyz)
 
     feature = SkyCoord(feature_xyz[...,0], feature_xyz[...,1], feature_xyz[...,2],
                        unit=[dist_unit] * 3,
