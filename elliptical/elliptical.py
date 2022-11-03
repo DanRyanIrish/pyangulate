@@ -151,6 +151,14 @@ def _identify_vertices(xy_vertices):
     norms = np.linalg.norm(xy_vertices, axis=component_axis)
     tmp_vertex_axis = vertex_axis + 1 if component_axis > vertex_axis else vertex_axis
     ll_idx = np.isclose(norms - norms.min(axis=tmp_vertex_axis, keepdims=True), 0)
+    # If two or more points are equidistant from origin, shift vertices slightly
+    # and recalculate so there is a unique closest vertex.
+    ll_idx_sum = ll_idx.sum(axis=-1)
+    if ll_idx_sum.any():
+        tmp_xy_vertices = copy.copy(xy_vertices)
+        tmp_xy_vertices[ll_idx_sum > 1] += 0.001
+        norms = np.linalg.norm(tmp_xy_vertices, axis=component_axis)
+        ll_idx = np.isclose(norms - norms.min(axis=tmp_vertex_axis, keepdims=True), 0)
     ll_idx = utils.repeat_over_new_axes(ll_idx, component_axis, n_xy)
     ll = xy_vertices[ll_idx].reshape(no_vertex_shape)
     ll_1vertex = ll.reshape(vertex1_shape)
