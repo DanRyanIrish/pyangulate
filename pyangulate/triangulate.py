@@ -5,7 +5,7 @@ import numpy as np
 from astropy.coordinates import SkyCoord
 from sunpy.coordinates import HeliocentricEarthEcliptic
 
-from tie_pointing import utils
+from pyangulate import utils
 
 
 def triangulate(observer1, observer2, epipolar_origin,

@@ -1,6 +1,6 @@
 import numpy as np
 
-from tie_pointing import transforms, utils
+from pyangulate import transforms, utils
 
 
 def test_transform_to_xy_plane():

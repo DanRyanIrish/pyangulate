@@ -8,7 +8,7 @@ from astropy.time import Time
 from astropy.wcs import WCS
 from sunpy.coordinates import HeliocentricEarthEcliptic, HeliographicStonyhurst
 
-from tie_pointing.elliptical import elliptical
+from pyangulate.elliptical import elliptical
 
 
 def test_inscribe_ellipse_in_3d_para():

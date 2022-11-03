@@ -8,8 +8,8 @@ from astropy.time import Time
 from astropy.wcs import WCS
 from sunpy.coordinates import HeliocentricEarthEcliptic, HeliographicStonyhurst
 
-from tie_pointing import utils
-from tie_pointing import triangulate
+from pyangulate import utils
+from pyangulate import triangulate
 
 
 def test_triangulate():

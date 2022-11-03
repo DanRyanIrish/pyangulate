@@ -4,8 +4,8 @@ from functools import partial
 
 import numpy as np
 
-from tie_pointing import transforms, utils
-from tie_pointing.elliptical import parallelogram, quadrilateral
+from pyangulate import transforms, utils
+from pyangulate.elliptical import parallelogram, quadrilateral
 
 
 def inscribe_ellipse_in_3d(vertices):

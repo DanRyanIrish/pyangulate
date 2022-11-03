@@ -1,0 +1,12 @@
+default_context:
+  package_name: pyangulate
+  module_name: pyangulate
+  short_description: Tools for deriving 3-D information from simultaneously observations from different viewpoints.
+  author_name: Dan Ryan
+  author_email: ryand5@tcd.ie
+  license: BSD 3-Clause
+  project_url: 
+  github_repo: DanRyanIrish/pyangulate
+  minimum_python_version: 3.8
+  use_compiled_extensions: n
+  include_example_code: n

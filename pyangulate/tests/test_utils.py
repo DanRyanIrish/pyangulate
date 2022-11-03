@@ -8,7 +8,7 @@ from astropy.time import Time
 from astropy.wcs import WCS
 from sunpy.coordinates import HeliocentricEarthEcliptic, HeliographicStonyhurst
 
-from tie_pointing import utils
+from pyangulate import utils
 
 
 def test_get_quadrilateral_slopes():

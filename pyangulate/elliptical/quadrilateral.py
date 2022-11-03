@@ -4,7 +4,7 @@ from functools import partial
 import numpy as np
 import scipy.optimize
 
-from tie_pointing import utils
+from pyangulate import utils
 
 
 def compute_isometry_transform(ll, lr, ul, trailing_convention=False):

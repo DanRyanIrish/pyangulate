@@ -3,7 +3,7 @@ from functools import partial
 
 import numpy as np
 
-from tie_pointing import transforms, utils
+from pyangulate import transforms, utils
 
 
 def get_equation_of_max_area_ellipse_in_parallelogram(vertices):

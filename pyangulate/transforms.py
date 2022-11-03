@@ -2,7 +2,7 @@ import copy
 
 import numpy as np
 
-from tie_pointing import utils
+from pyangulate import utils
 
 
 def transform_to_xy_plane(points):

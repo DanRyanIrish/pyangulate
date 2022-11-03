@@ -1,7 +1,7 @@
 import numpy as np
 
-from tie_pointing import utils
-from tie_pointing.elliptical import quadrilateral
+from pyangulate import utils
+from pyangulate.elliptical import quadrilateral
 
 
 def test_compute_isometry_transform():
