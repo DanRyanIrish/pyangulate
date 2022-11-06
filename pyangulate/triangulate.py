@@ -115,7 +115,7 @@ def triangulate(observer1, observer2, epipolar_origin,
     epipolar_origin = epipolar_origin.transform_to(HeliocentricEarthEcliptic)
     observer1_xyz = observer1.cartesian.xyz
     dist_unit = observer1_xyz.unit
-    observer1_xyz = observer1_xyz.value
+    observer1_xyz = observer1_xyz.to_value(dist_unit)
     observer2_xyz = observer2.cartesian.xyz.to_value(dist_unit)
     epipolar_origin_xyz = epipolar_origin.cartesian.xyz.to_value(dist_unit)
     # Move the cartesian axis to the last position
@@ -143,16 +143,10 @@ def triangulate(observer1, observer2, epipolar_origin,
     # of the epipolar origin.
     # This is best done in pixel units.
     cen_pix_obs1 = np.array(wcs_obs1.pixel_shape) / 2
-    cen_pix_obs2 = np.array(wcs_obs2.pixel_shape) / 2
-    idx = np.logical_or(np.logical_and(origin_pix_obs1[...,1] >= cen_pix_obs1[...,1],
-                                       feature_pix_obs1[...,0] < origin_pix_obs1[...,0]),
-                        np.logical_and(origin_pix_obs1[...,1] < cen_pix_obs1[...,1],
-                                       feature_pix_obs1[...,0] > origin_pix_obs1[...,0]))
+    idx = _get_s_sign_idx(cen_pix_obs1, origin_pix_obs1, feature_pix_obs1)
     s_1[idx] *= -1
-    idx = np.logical_or(np.logical_and(origin_pix_obs2[...,1] >= cen_pix_obs2[...,1],
-                                       feature_pix_obs2[...,0] < origin_pix_obs2[...,0]),
-                        np.logical_and(origin_pix_obs2[...,1] < cen_pix_obs2[...,1],
-                                       feature_pix_obs2[...,0] > origin_pix_obs2[...,0]))
+    cen_pix_obs2 = np.array(wcs_obs2.pixel_shape) / 2
+    idx = _get_s_sign_idx(cen_pix_obs2, origin_pix_obs2, feature_pix_obs2)
     s_2[idx] *= -1
 
     # Let a, b be the 2-D coordinate system on the epipolar plane.
@@ -174,7 +168,7 @@ def triangulate(observer1, observer2, epipolar_origin,
     # The direction vector of the 3-D line definining the a-axis this therefore:
     dv_a = utils.calculate_3d_line_direction_vector(epipolar_origin_xyz, p)
     # The direction vector of the b-axis is:
-    if observer2.lon < 0 * u.deg:
+    if observer2.lon < observer1.lon:
         dv_b = utils.calculate_3d_line_direction_vector(observer2_xyz, observer1_xyz)
     else:
         dv_b = utils.calculate_3d_line_direction_vector(observer1_xyz, observer2_xyz)
@@ -213,6 +207,42 @@ def triangulate(observer1, observer2, epipolar_origin,
                        obstime=observer1.obstime
                       ).transform_to(HeliocentricEarthEcliptic)
     return feature
+
+
+def _get_s_sign_idx(cen_pix, origin_pix, feature_pix):
+    """Calculate sign of angle, s, from epipolar origin to feature.
+
+    This depends on whether they to the right (+) of left (-) the line from the
+    image centre to the projection of the epipolar origin.  The indices returned
+    indicate which values of the s array that should be negative.
+
+    Parameters
+    ----------
+    cen_pix: `numpy.ndarray`
+        The x and y pixel values of the center of the image.
+        Final dimension must be length 2 with 0th element giving the x coord and
+        the other giving the y coord.  Preceding dimensions must be same shape as
+        the array holding the s angle values.
+    origin_pix: `numpy.ndarray`
+        The x and y pixel values of the epipolar origin in the image plane.
+        Must be same shape and format as cen_pix
+    feature_pix: `numpy.ndarray`
+        The x and y pixel values of the feature, which together with the epipolar origin,
+        defines the angle s.  Must be same shape and format as cen_pix
+
+    Returns
+    -------
+    idx: `numpy.ndarray`
+        The indices of the array holding the angle s which are negative.
+    """
+    # Get the equation of the line joining the center of the image with
+    # the epipolar plane in the image plane.
+    origin_center_line = utils.get_line_equation_coeffs_2d(cen_pix[...,0], cen_pix[...,1],
+                                                           origin_pix[...,0], origin_pix[...,1])
+    # Calculate the x pixel values corresponding to the y pixel values of the feature.
+    line_x = (feature_pix[...,1] - origin_center_line[0]) / origin_center_line[1]
+    # s angle values shoudl be negative if they are to the left of the line.
+    return feature_pix[...,0] < line_x
 
 
 def _get_lon_from_xy(x, y):

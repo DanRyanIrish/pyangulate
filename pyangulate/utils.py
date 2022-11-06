@@ -255,3 +255,9 @@ def hee_from_hee_xyz(x, y, z):
     r = z / np.sin(lat)
 
     return lon * u.rad, lat * u.rad, r
+
+
+def get_line_equation_coeffs_2d(x1, y1, x2, y2):
+    m = (y2 - y1) / (x2 - x1)
+    c = y1 - m * x1
+    return c, m
