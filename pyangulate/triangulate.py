@@ -156,7 +156,7 @@ def triangulate(observer1, observer2, epipolar_origin,
     # Let the positive direction be towards the observers line.
     # Let the b-axis be the line rotated anti-clockwise to the a-axis that
     # passes through the origin.
-    # By definition this line is parallel to the Earth-SolO line.
+    # By definition this line is parallel to the line joining the observers (epipole).
     # The equation of the a-axis is defined by the origin and the
     # origin's projection onto the observers' line, p.
     # This is given by:  p = observer1 + t.d
@@ -189,7 +189,7 @@ def triangulate(observer1, observer2, epipolar_origin,
     v_1 = -1 * observer1_ab / np.expand_dims(d_1, -1)
     v_2 = -1 * observer2_ab / np.expand_dims(d_2, -1)
     # Derive the a-b coordinates of intersection of the lines of view.
-    dr_a, dr_b = derive_epipolar_coords_of_a_point(d_2, v_2, s_2, d_1, v_1, s_1)
+    dr_a, dr_b = derive_epipolar_coords_of_a_point_affine(d_2, v_2, s_2, d_1, v_1, s_1)
     # Convert feature's a-b coords to xyz coords
     feature_xyz = (
             (utils.calculate_point_along_3d_line(dv_a,
@@ -245,12 +245,16 @@ def _get_lon_from_xy(x, y):
     return lon * u.rad
 
 
-def derive_epipolar_coords_of_a_point(d_1, v_1, s_1, d_2, v_2, s_2):
+def derive_epipolar_coords_of_a_point_affine(d_1, v_1, s_1, d_2, v_2, s_2):
     """
-    Derive the intersection of lines of view of a feature from two observers.
+    Derive intersection of lines of view to a feature from 2 observers assuming affine geometry.
 
-    The intersection section is defined in a 2-D coordinate system on the epipolar
-    plane that includes the two observers and an origin.
+    The intersection section is defined in a 2-D coordinate system on the epipolar plane that
+    includes the two observers and an origin.
+    The assumption of affine relates to the assumption that the lines of sight from the
+    observer to the epipolar origin and from the observer to the feature are parallel, i.e.
+    The angle between the lines of sight is small.  This assumption may lead to inaccuracies
+    even when that angle is small.
 
     Parameters
     ----------
@@ -269,6 +273,14 @@ def derive_epipolar_coords_of_a_point(d_1, v_1, s_1, d_2, v_2, s_2):
     dr_a, dr_b: `float` or `numpy.ndarray`
         The coordinates of the intersection
         in the 2-D coordinate system of the epipolar plane.
+
+    Notes
+    -----
+    Equations below are derived from Equation 5 in [1] which assumed an affine geometry.
+
+    References
+    ----------
+    [1]: Inhester, Stereoscopy basics for the STEREO Mission, ISSI, 2006
     """
     # Derive the unit vector rotated 90 degrees in the epipolar plane
     # from the unit vector pointing from the observer to the origin.
@@ -283,4 +295,57 @@ def derive_epipolar_coords_of_a_point(d_1, v_1, s_1, d_2, v_2, s_2):
     b_term4 = e_1[...,1] / e_1[...,0]
     dr_b = (b_term1 - b_term2) / (b_term3 - b_term4)
     dr_a = (d_2 * np.tan(s_2) - e_2[...,1] * dr_b) / e_2[...,0]
+    return dr_a, dr_b
+
+
+def derive_epipolar_coords_of_a_point(d_1, v_1, s_1, d_2, v_2, s_2):
+    """
+    Derive intersection of lines of view to a feature from 2 observers.
+
+    The intersection section is defined in a 2-D coordinate system on the epipolar plane that
+    includes the two observers and an origin. The translations used in this function assume
+    a projective geometry. This does not suffer from the sam inaccuracies as teh assumption
+    of affine geometry.
+
+    Parameters
+    ----------
+    d_1, d_2: `float`
+        Distance from observer 1 (2) to the origin of the epipolar plane.
+    v_1, v_2: `numpy.ndarray`
+        The unit vector pointing from observer 1 (2) to the origin.
+        Defined in the 2-D coordinate system of the epipolar plane
+        and so must be length-2 array.
+    s_1, s_2: `float` or `numpy.ndarray`
+        The angle from the origin of the epipolar plane to the feature(s)
+        in the image plane of observer 1 (2).
+
+    Returns
+    -------
+    dr_a, dr_b: `float` or `numpy.ndarray`
+        The coordinates of the intersection
+        in the 2-D coordinate system of the epipolar plane.
+
+    Notes
+    -----
+    Equation below are derived from Equation 7 in [1]
+
+    References
+    ----------
+    [1]: Inhester, Stereoscopy basics for the STEREO Mission, ISSI, 2006
+    """
+    # Derive the unit vector rotated 90 degrees in the epipolar plane
+    # from the unit vector pointing from the observer to the origin.
+    e_1 = v_1[...,::-1].copy()
+    e_1[...,1] *= -1
+    e_2 = v_2[...,::-1].copy()
+    e_2[...,1] *= -1
+    # Derive the terms of the required translation equations.
+    alpha = e_1 - v_1 * np.tan(s_1)[...,np.newaxis]
+    gamma = e_2 - v_2 * np.tan(s_2)[...,np.newaxis]
+    b_term1 = d_2 * np.tan(s_2) / gamma[...,0]
+    b_term2 = d_1 * np.tan(s_1) / alpha[...,0]
+    b_term3 = gamma[...,1] / gamma[...,0]
+    b_term4 = alpha[...,1] / alpha[...,0]
+    dr_b = (b_term1 - b_term2) / (b_term3 - b_term4)
+    dr_a = (d_2 * np.tan(s_2)) / gamma[...,1] - gamma[...,0] / gamma[...,1] * dr_b
     return dr_a, dr_b
