@@ -83,8 +83,8 @@ def repeat_over_new_axes(arr, axes, repeats):
     item = [slice(None)] * arr.ndim
     tile_shape = [1] * arr.ndim
     for axis, repeat in zip(axes, repeats):
-       item.insert(axis, np.newaxis)
-       tile_shape.insert(axis, repeat)
+        item.insert(axis, np.newaxis)
+        tile_shape.insert(axis, repeat)
     return np.tile(arr[tuple(item)], tuple(tile_shape))
 
 

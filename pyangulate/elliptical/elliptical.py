@@ -28,6 +28,12 @@ def inscribe_ellipse_in_3d(vertices):
         the vertices input, except that the last axis has length 3 and and its
         elements correspond to the center, major coord, and minor coord, repectively.
     """
+    # If vertices is only 2-D, add leading dummy axis to make array arithmetic work.
+    if vertices.ndim == 2:
+        leading_dummy = True
+        vertices = vertices[np.newaxis]
+    else:
+        leading_dummy = False
     # Rotate vertices to xy-plane
     component_axis = -2
     xy_vertices, A = transforms.transform_to_xy_plane(vertices)
@@ -50,6 +56,8 @@ def inscribe_ellipse_in_3d(vertices):
     # Strip homogeneous axis.
     nat_item = utils._item(ellipse_vertices.ndim, component_axis, slice(1, None))
     ellipse_vertices = ellipse_vertices[nat_item]
+    if leading_dummy:
+        ellipse_vertices = ellipse_vertices[0]
     return ellipse_vertices
 
 
