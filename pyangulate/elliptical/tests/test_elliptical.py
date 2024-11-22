@@ -101,3 +101,18 @@ def test_inscribe_ellipse_in_quadrilateral():
     assert np.allclose(output_center, expected_center)
     assert np.allclose(output_major, expected_major)
     assert np.allclose(output_minor, expected_minor)
+
+
+def test_get_canonical_ellipse_coeffs_from_xyvertices():
+    xy_center, xy_major, xy_minor = np.array([1, 2]), np.array([0, 3]), np.array([3, 4])
+    expected_h = 1
+    expected_k = 2
+    expected_a = 1.4142135623730951
+    expected_b = 2.8284271247461903
+    expected_theta = 2.356194490192345
+    h, k, a, b, theta = elliptical.get_canonical_ellipse_coeffs_from_xyvertices(xy_center, xy_major, xy_minor)
+    assert np.allclose(h, expected_h)
+    assert np.allclose(k, expected_k)
+    assert np.allclose(a, expected_a)
+    assert np.allclose(b, expected_b)
+    assert np.allclose(theta, expected_theta)

@@ -255,3 +255,4 @@ def hee_from_hee_xyz(x, y, z):
     r = z / np.sin(lat)
 
     return lon * u.rad, lat * u.rad, r
+

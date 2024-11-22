@@ -349,3 +349,159 @@ def derive_epipolar_coords_of_a_point(d_1, v_1, s_1, d_2, v_2, s_2):
     dr_b = (b_term1 - b_term2) / (b_term3 - b_term4)
     dr_a = (d_2 * np.tan(s_2)) / gamma[...,1] - gamma[...,0] / gamma[...,1] * dr_b
     return dr_a, dr_b
+
+
+def define_epipolar_planes(epipolar_origins, loc1, loc2, wcs1, wcs2):
+    """
+    Define a set of epipolar planes in the image frames of the two observers.
+
+    Parameters
+    ----------
+    epipolar_origins: `astropy.coordinates.SkyCoord`
+        The points in 3-D space that define each epipolar plane along with
+        positions of th two observers. Must be iterable, i.e. not scalar.
+        Also, frame must be transformable to HeliocentricEarthEcliptic.
+    loc1: `astropy.coordinates.SkyCoord`
+        The location of observer 1.  Must be scalar.
+    loc2: `astropy.coordinates.SkyCoord`
+        The location of observer 2.  Must be scalar.
+    wcs1:
+        The WCS describing observer 1's image plane. Must be APE-14-API-compliant.
+    wcs2:
+        The WCS describing observer 2's image plane. Must be APE-14-API-compliant.
+
+    Returns
+    -------
+    epipolar_lines1: `numpy.ndarray`
+        The coefficients of the lines in observer 1's image plane in pixel coordinates
+        corresponding to the 
+    epipolar_lines2: `numpy.ndarray`
+        The coefficients of the lines in observer 2's image plane in pixel coordinates
+        corresponding to the epipolar planes.
+    """
+    if epipolar_origins.isscalar:
+        epipolar_origins.reshape((1,))
+    epipolar_planes = []
+    epipolar_lines1 = []
+    epipolar_lines2 = []
+    epipolar_points1 = []
+    epipolar_points2 = []
+    dist_unit = u.R_sun
+    base_frame = HeliocentricEarthEcliptic
+    epipolar_origins = epipolar_origins.transform_to(base_frame)
+    loc1 = loc1.transform_to(base_frame)
+    loc2 = loc2.transform_to(base_frame)
+    for i, epipolar_origin in enumerate(epipolar_origins):
+        epipolar_planes.append(utils.derive_3d_plane_coefficients(
+            epipolar_origin.cartesian.xyz.to_value(dist_unit),
+            loc1.cartesian.xyz.to_value(dist_unit),
+            loc2.cartesian.xyz.to_value(dist_unit)))
+        anchor1_x, anchor1_y = 1 * dist_unit, -1 * dist_unit
+        anchor2_x, anchor2_y = -1 * dist_unit, 1 * dist_unit
+        # Calculate anchor points in 3-D space to enable the evaluation and plotting of epipolar lines.
+        anchor1 = utils.hee_skycoord_from_xyplane(
+            anchor1_x, anchor1_y, *epipolar_planes[-1], obstime=loc1.obstime)
+        anchor2 = utils.hee_skycoord_from_xyplane(
+            anchor2_x, anchor2_y, *epipolar_planes[-1], obstime=loc1.obstime)
+
+        # Calculate the pixel coords of the anchor points in the image planes of both observers.
+        anchor1_x1, anchor1_y1 = wcs1.world_to_pixel(anchor1)
+        anchor1_x1, anchor1_y1 = float(anchor1_x1), float(anchor1_y1)
+        anchor2_x1, anchor2_y1 = wcs1.world_to_pixel(anchor2)
+        anchor2_x1, anchor2_y1 = float(anchor2_x1), float(anchor2_y1)
+        epipolar_points1.append((anchor1_x1, anchor1_y1, anchor2_x1, anchor2_y1))
+        epipolar_lines1.append(get_line_equation_coeffs_2d(*epipolar_points1[-1]))
+
+        anchor1_x2, anchor1_y2 = wcs2.world_to_pixel(anchor1)
+        anchor1_x2, anchor1_y2 = float(anchor1_x2), float(anchor1_y2)
+        anchor2_x2, anchor2_y2 = wcs2.world_to_pixel(anchor2)
+        anchor2_x2, anchor2_y2 = float(anchor2_x2), float(anchor2_y2)
+        epipolar_points2.append((anchor1_x2, anchor1_y2, anchor2_x2, anchor2_y2))
+        epipolar_lines2.append(get_line_equation_coeffs_2d(*epipolar_points2[-1]))
+    return np.array(epipolar_lines1), np.array(epipolar_lines2)
+
+
+def define_epipolar_planes_from_solar_rotation_axis(lower, upper, loc1, loc2, wcs1, wcs2, n_planes):
+    """
+    Define a set of epipolar planes in the image frames of the two observers.
+
+    The 3rd points (in addition to the locations of the two observers) that
+    define the epipolar planes are themselves defined by their distance from
+    Sun-center along the Sun's rotational axis.  The returned planes are
+    spaced evenly between the input lower and upper limits.
+
+    Parameters
+    ----------
+    lower: `astropy.units.Quantity`
+        The distance from Sun-center along the Sun's rotational axis of the
+        epipolar plane that bounds the lower edge of the source.
+        Must be scalar.
+    upper: `astropy.units.Quantity`
+        The distance from Sun-center along the Sun's rotational axis of the
+        epipolar plane that bounds the upper edge of the source.
+        Must be scalar.
+    loc1: `astropy.coordinates.SkyCoord`
+        The location of observer 1.  Must be scalar.
+    loc2: `astropy.coordinates.SkyCoord`
+        The location of observer 2.  Must be scalar.
+    wcs1:
+        The WCS describing observer 1's image plane. Must be APE-14-API-compliant.
+    wcs2:
+        The WCS describing observer 2's image plane. Must be APE-14-API-compliant.
+    n_planes: `int`
+        The number of evenly spaced epipolar planes desired between the lower
+        and upper bounding planes.
+
+    Returns
+    -------
+    epipolar_lines1: `numpy.ndarray`
+        The coefficients of the lines in observer 1's image plane in pixel coordinates
+        corresponding to the epipolar planes. 
+    epipolar_lines2: `numpy.ndarray`
+        The coefficients of the lines in observer 2's image plane in pixel coordinates
+        corresponding to the epipolar planes.
+    epipolar_origins: `astropy.coordinates.SkyCoord`
+        The 3-D locations that define the epipolar planes along with the two observers'
+        positions.
+    """
+    distances = np.linspace(lower.value, upper.to_value(lower.unit), n_planes) * lower.unit
+    epipolar_origins = SkyCoord(lon=np.zeros(n_planes)*u.deg,
+                                lat=(np.zeros(n_planes) + 90)*u.deg,
+                                distance=distances,
+                                frame=HeliocentricEarthEcliptic,
+                                obstime=loc1.obstime)
+    epipolar_lines1, epipolar_lines2 = define_epipolar_planes(epipolar_origins, loc1, loc2,
+                                                              wcs1, wcs2)
+    return epipolar_lines1, epipolar_lines2, epipolar_origins
+
+
+def project_point_to_line_2D(point, line):
+    """
+    Find the point on a line that is closest to a given point.
+    
+    That is the point of intersection between the line and the
+    line perpdendicular to it that passes through the point.
+    
+    Parameters
+    ----------
+    point: `numpy.ndarray`
+       The x-y coords of the point. Can be any number of dimensions
+       but last one must correspond to x, y in that order.
+    line: `numpy.ndarray`
+        The line coefficients of the line.  Must be same shape as point
+        input with last dimension corresponding to the intercept and
+        slope, in that order.
+        
+    Returns
+    -------
+    point_intersect: `numpy.ndarray`
+        Projection of point onto line. Same shape as input point.
+    """
+    x, y = point[...,0], point[...,1]
+    intercept, slope = line[...,0], line[...,1]
+    perp_slope = -1 / slope
+    perp_intercept = y - perp_slope * x
+    x_intersect = (perp_intercept - intercept) / (slope - perp_slope)
+    y_intersect = slope * x_intersect + intercept
+    point_intersect = np.stack((x_intersect, y_intersect), axis=-1)
+    return point_intersect
