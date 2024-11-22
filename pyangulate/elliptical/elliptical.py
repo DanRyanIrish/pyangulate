@@ -599,7 +599,7 @@ def find_intersections_ellipse_and_line(h, k, a, b, phi, m, c):
     gamma = b**2 * new**2 + a**2 * tau**2 - a**2 * b**2
     sqrt = np.sqrt(beta**2 - 4*alpha*gamma)
     if hasattr(sqrt, "ndim"):
-        sqrt *= np.array([-1, 1]).reshape([2] + [1]*sqrt.ndim)
+        sqrt = sqrt * np.array([-1, 1]).reshape([2] + [1]*sqrt.ndim)
     else:
         sqrt *= np.array([-1, 1])
     x = (-beta + sqrt) / (2 * alpha)
